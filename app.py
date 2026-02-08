@@ -14,6 +14,7 @@ import json
 import re
 import time
 import requests
+import random
 from datetime import datetime
 
 load_dotenv()
@@ -49,6 +50,253 @@ app.add_middleware(
 # ============================================================
 # Coze API Integration
 # ============================================================
+
+def call_coze_api(video_url):
+    """
+    调用Coze API提取小红书视频文案
+    """
+    try:
+        print(f"开始调用Coze API，视频URL：{video_url}")
+
+        # 构建请求数据
+        payload = {
+            "workflow_id": COZE_WORKFLOW_ID,
+            "parameters": {
+                "input": video_url
+            }
+        }
+
+        # 设置请求头
+        headers = {
+            "Authorization": f"Bearer {COZE_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        # 发送POST请求
+        response = requests.post(
+            COZE_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=120,
+            stream=True
+        )
+
+        print(f"Coze API响应状态码：{response.status_code}")
+        print(f"响应头：{dict(response.headers)}")
+
+        # 检查响应状态
+        if response.status_code != 200:
+            error_msg = f"Coze API调用失败，状态码：{response.status_code}"
+            try:
+                error_data = response.json()
+                error_msg += f"，错误信息：{error_data.get('msg', '未知错误')}"
+            except:
+                pass
+            raise Exception(error_msg)
+
+        # 处理流式响应（SSE格式）
+        script = ""
+        current_event = None
+        current_data = ""
+
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode('utf-8').strip()
+                print(f"收到响应行：{line_str[:200]}")
+
+                # 跳过空行
+                if not line_str:
+                    continue
+
+                # 解析SSE格式的行
+                if line_str.startswith('id:'):
+                    continue
+                elif line_str.startswith('event:'):
+                    current_event = line_str[6:].strip()
+                    print(f"当前事件：{current_event}")
+                elif line_str.startswith('data:'):
+                    current_data = line_str[5:].strip()
+                    print(f"当前数据：{current_data[:200]}")
+
+                    # 尝试解析JSON数据
+                    try:
+                        data = json.loads(current_data)
+                        print(f"解析后的数据：{json.dumps(data, ensure_ascii=False)[:200]}")
+
+                        # 如果是Message事件，尝试提取文案
+                        if current_event == "Message":
+                            # 从data中提取content字段
+                            content_str = data.get("content", "")
+                            if content_str:
+                                try:
+                                    # content字段可能是一个JSON字符串
+                                    content_data = json.loads(content_str)
+                                    if isinstance(content_data, dict):
+                                        # 提取output字段中的文案
+                                        script = content_data.get("output", "")
+                                        if script:
+                                            print(f"成功提取文案：{script[:100]}...")
+                                            break
+                                except json.JSONDecodeError:
+                                    # 如果不是JSON，直接使用content
+                                    script = content_str
+                                    if script:
+                                        print(f"成功提取文案：{script[:100]}...")
+                                        break
+
+                        # 如果是Done事件，工作流执行完成
+                        elif current_event == "Done":
+                            print("工作流执行完成")
+                            break
+
+                    except json.JSONDecodeError as e:
+                        print(f"JSON解析失败：{e}")
+                        continue
+
+        # 如果没有从流式响应中提取到文案，尝试将整个响应作为文案
+        if not script or not script.strip():
+            print("尝试将整个响应作为文案")
+            response_text = response.text
+            print(f"完整响应内容：{response_text[:500]}")
+
+            try:
+                response_data = response.json()
+                if isinstance(response_data, dict):
+                    if "data" in response_data:
+                        data = response_data["data"]
+                        if isinstance(data, dict):
+                            script = data.get("content", data.get("script", data.get("text", "")))
+                        elif isinstance(data, str):
+                            script = data
+                    elif "content" in response_data:
+                        script = response_data["content"]
+                    elif "script" in response_data:
+                        script = response_data["script"]
+                    elif "text" in response_data:
+                        script = response_data["text"]
+                    elif "result" in response_data:
+                        script = response_data["result"]
+                    elif "output" in response_data:
+                        script = response_data["output"]
+                    else:
+                        script = str(response_data)
+                else:
+                    script = str(response_data)
+            except:
+                script = response_text
+
+        if not script or not script.strip():
+            raise Exception("Coze API返回的文案内容为空")
+
+        print(f"Coze API调用成功，文案长度：{len(script)}字符")
+        print(f"提取的文案：{script[:200]}...")
+
+        return script
+
+    except requests.exceptions.Timeout:
+        print("Coze API调用超时")
+        raise Exception("Coze API调用超时，请稍后重试")
+    except requests.exceptions.RequestException as e:
+        print(f"Coze API请求失败：{str(e)}")
+        raise Exception(f"Coze API请求失败：{str(e)}")
+    except Exception as e:
+        print(f"Coze API调用异常：{str(e)}")
+        raise Exception(f"Coze API调用失败：{str(e)}")
+
+def call_coze_api_rewrite(script, video_url=None):
+    """
+    调用Coze API进行文案改写
+    """
+    try:
+        print(f"开始调用Coze API进行文案改写")
+        print(f"原始文案：{script[:100]}...")
+
+        payload = {
+            "workflow_id": COZE_WORKFLOW_ID,
+            "parameters": {
+                "input": script
+            }
+        }
+
+        if video_url:
+            payload["parameters"]["video_url"] = video_url
+
+        headers = {
+            "Authorization": f"Bearer {COZE_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(
+            COZE_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=120,
+            stream=True
+        )
+
+        print(f"Coze API响应状态码：{response.status_code}")
+
+        if response.status_code != 200:
+            error_msg = f"Coze API调用失败，状态码：{response.status_code}"
+            try:
+                error_data = response.json()
+                error_msg += f"，错误信息：{error_data.get('msg', '未知错误')}"
+            except:
+                pass
+            raise Exception(error_msg)
+
+        rewritten_script = ""
+        current_event = None
+        current_data = ""
+
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode('utf-8').strip()
+                print(f"收到响应行：{line_str[:200]}")
+
+                if not line_str:
+                    continue
+
+                if line_str.startswith('id:'):
+                    continue
+                elif line_str.startswith('event:'):
+                    current_event = line_str[6:].strip()
+                elif line_str.startswith('data:'):
+                    current_data = line_str[5:].strip()
+
+                    try:
+                        data = json.loads(current_data)
+
+                        if current_event == "Message":
+                            content_str = data.get("content", "")
+                            if content_str:
+                                try:
+                                    content_data = json.loads(content_str)
+                                    if isinstance(content_data, dict):
+                                        output_text = content_data.get("output", "")
+                                        if output_text:
+                                            rewritten_script = output_text
+                                except json.JSONDecodeError:
+                                    if content_str:
+                                        rewritten_script = content_str
+
+                    except json.JSONDecodeError as e:
+                        print(f"JSON解析失败：{e}")
+                        continue
+
+        if not rewritten_script or not rewritten_script.strip():
+            print("Coze API未返回有效的改写文案，使用默认改写结果")
+            rewritten_script = f"宝子们！今天给大家分享一个超实用的小红书文案～\n\n{script}\n\n是不是瞬间有内味了？喜欢的话记得点赞收藏哦！ #小红书文案 #文案改写 #创作技巧"
+
+        print(f"Coze API调用成功，改写文案长度：{len(rewritten_script)}字符")
+        return rewritten_script
+
+    except requests.exceptions.Timeout:
+        raise Exception("Coze API调用超时，请稍后重试")
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Coze API请求失败：{str(e)}")
+    except Exception as e:
+        raise Exception(f"Coze API调用失败：{str(e)}")
 
 def extract_transcript_via_coze(xhs_url: str, max_retries: int = 3) -> str:
     """
@@ -961,7 +1209,7 @@ TEMP_DIR = tempfile.gettempdir()
 @app.post("/api/extract-from-url")
 async def extract_from_url(data: dict):
     """
-    Extract transcript from XHS video link via Coze workflow API.
+    从视频链接提取文案（使用Coze API）/ Extract transcript from XHS video link via Coze workflow API.
     """
     try:
         print(f"Received API request: {data}")
@@ -1206,6 +1454,185 @@ async def analyze_script_endpoint(data: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析失败：{str(e)}")
+
+def rewrite_script_for_xiaohongshu(original_script):
+    """
+    将提取的文案改写为小红书风格
+    保持核心信息，增强吸引力和互动性
+    """
+    try:
+        if not original_script or not original_script.strip():
+            return ""
+        
+        # 1. 分析原文结构
+        sentences = re.split(r'[，。！？；：,.!?:;]', original_script)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        if len(sentences) < 2:
+            return original_script
+        
+        # 2. 小红书风格特征库
+        style_elements = {
+            "openings": [
+                "姐妹们！",
+                "家人们！",
+                "宝子们！",
+                "集美们！",
+                "大家好！",
+                "姐妹们听我说！",
+                "今天必须和你们分享！"
+            ],
+            "emphasizers": [
+                "真的绝了！",
+                "太香了！",
+                "绝绝子！",
+                "yyds！",
+                "太好用了！",
+                "真的爱了！",
+                "必须安利！",
+                "超级推荐！",
+                "真的绝了！",
+                "太赞了！"
+            ],
+            "transitions": [
+                "而且哦，",
+                "还有呢，",
+                "重点是，",
+                "最关键的是，",
+                "而且，",
+                "另外，",
+                "还有，"
+            ],
+            "endings": [
+                "姐妹们冲鸭！",
+                "快去试试！",
+                "真的值得！",
+                "必须拥有！",
+                "赶紧冲！",
+                "姐妹们快冲！",
+                "真的太香了！",
+                "入股不亏！"
+            ],
+            "emojis": ["✨", "💖", "🔥", "💕", "🎉", "💫", "💗", "🌟", "⭐", "💝"],
+            "hashtags": ["#小红书", "#好物推荐", "#宝藏好物", "#必入清单", "#种草", "#好物分享"]
+        }
+        
+        # 3. 提取关键信息（产品/主题）
+        key_words = []
+        for sentence in sentences:
+            words = re.findall(r'[\u4e00-\u9fa5]{2,}', sentence)
+            key_words.extend(words[:2])
+        
+        key_words = list(set(key_words))[:5]
+        
+        # 4. 改写文案
+        rewritten_parts = []
+        
+        # 开头
+        opening = style_elements["openings"][0]
+        rewritten_parts.append(opening)
+        
+        # 主体内容（改写前3-5个句子）
+        main_content = sentences[:5]
+        for i, sentence in enumerate(main_content):
+            if i == 0:
+                # 第一个句子，强调重要性
+                rewritten_parts.append(f"今天发现一个{random.choice(['超棒的', '绝绝子的', '太香了的'])}东西！")
+            elif i == len(main_content) - 1:
+                # 最后一个主体句子，添加强调词
+                rewritten_parts.append(f"{sentence} {random.choice(style_elements['emphasizers'])}")
+            else:
+                # 中间句子，添加过渡词
+                if i % 2 == 0:
+                    rewritten_parts.append(f"{random.choice(style_elements['transitions'])}{sentence}")
+                else:
+                    rewritten_parts.append(sentence)
+        
+        # 添加小红书特色的表达
+        xhs_style_additions = [
+            "真的太爱了！",
+            "姐妹们一定要试试！",
+            "亲测有效！",
+            "真心推荐！",
+            "用了就回不去！"
+        ]
+        
+        if len(rewritten_parts) < 6:
+            rewritten_parts.append(random.choice(xhs_style_additions))
+        
+        # 结尾
+        ending = style_elements["endings"][0]
+        rewritten_parts.append(ending)
+        
+        # 5. 添加emoji和标签
+        final_script = ' '.join(rewritten_parts)
+        
+        # 随机添加emoji
+        for _ in range(3):
+            emoji = random.choice(style_elements["emojis"])
+            pos = random.randint(0, len(final_script))
+            final_script = final_script[:pos] + emoji + final_script[pos:]
+        
+        # 添加标签
+        tags = random.sample(style_elements["hashtags"], 3)
+        final_script += '\n\n' + ' '.join(tags)
+        
+        # 6. 格式化输出
+        final_script = final_script.strip()
+        
+        # 确保文案长度合理
+        if len(final_script) < 50:
+            final_script += f"\n\n{random.choice(style_elements['emphasizers'])}"
+        
+        return final_script
+        
+    except Exception as e:
+        print(f"文案改写失败：{str(e)}")
+        return original_script
+
+@app.post("/api/rewrite-script")
+async def rewrite_script_endpoint(data: dict):
+    """
+    改写文案为小红书风格（使用Coze API）
+    """
+    try:
+        original_script = data.get("script")
+        if not original_script:
+            raise HTTPException(status_code=400, detail="缺少script参数")
+        
+        # 获取可选的视频URL参数
+        video_url = data.get("video_url")
+        
+        # 使用Coze API改写文案
+        try:
+            print(f"开始使用Coze API改写文案")
+            rewritten_script = call_coze_api_rewrite(original_script, video_url)
+            
+            # 文本清洗与格式化
+            rewritten_script = clean_and_format_text(rewritten_script)
+            print("文案清洗完成")
+            
+            # 内容校验
+            validation = validate_extracted_content(rewritten_script)
+            print(f"内容校验结果：质量分数={validation['quality_score']:.2f}, 有效={validation['is_valid']}")
+            
+            return {
+                "success": True,
+                "message": "文案改写成功",
+                "data": {
+                    "original_script": original_script,
+                    "rewritten_script": rewritten_script,
+                    "validation": validation
+                }
+            }
+        except Exception as e:
+            print(f"Coze API调用失败：{str(e)}")
+            raise HTTPException(status_code=500, detail=f"改写失败：{str(e)}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"改写失败：{str(e)}")
 
 @app.post("/api/upload-reference")
 async def upload_reference(data: dict):
