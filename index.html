@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小红书博主口播稿分析与生成工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <style>
+        /* 自定义样式 */
+        .tab-active {
+            @apply border-b-2 border-pink-500 text-pink-600;
+        }
+        .btn-pink {
+            @apply bg-pink-500 hover:bg-pink-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-300;
+        }
+        .btn-purple {
+            @apply bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-300;
+        }
+        .btn-green {
+            @apply bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-300;
+        }
+        .card {
+            @apply bg-white rounded-xl shadow-lg p-6 mb-6;
+        }
+        .input-field {
+            @apply border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent;
+        }
+        .textarea-field {
+            @apply border border-gray-300 rounded-lg px-4 py-2 w-full focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent;
+        }
+        .section-title {
+            @apply text-xl font-semibold text-gray-700 mb-4 flex items-center;
+        }
+        .section-title i {
+            @apply mr-2 text-pink-500;
+        }
+        .error-message {
+            @apply bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4;
+        }
+        .success-message {
+            @apply bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-4;
+        }
+        .warning-message {
+            @apply bg-yellow-50 border border-yellow-200 text-yellow-700 px-4 py-3 rounded-lg mb-4;
+        }
+        .loading-overlay {
+            @apply absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-5xl">
+        <!-- 页面标题 -->
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-pink-600 mb-4">小红书博主口播稿分析与生成工具</h1>
+            <p class="text-gray-600 text-lg">智能分析参考风格，一键生成符合你特色的口播稿</p>
+        </header>
+
+        <!-- 主要内容区域 -->
+        <main class="mb-8">
+            <!-- 标签页导航 -->
+            <div class="bg-white rounded-t-xl shadow-lg mb-0">
+                <div class="flex border-b">
+                    <button type="button" class="tab-btn tab-active flex-1 py-4 px-6 font-medium" data-tab="extract">
+                        <i class="fa fa-video-camera mr-2"></i>文案提取
+                    </button>
+                    <button type="button" class="tab-btn flex-1 py-4 px-6 font-medium" data-tab="reference">
+                        <i class="fa fa-user mr-2"></i>参考分析
+                    </button>
+                    <button type="button" class="tab-btn flex-1 py-4 px-6 font-medium" data-tab="bf">
+                        <i class="fa fa-file-text mr-2"></i>产品背景
+                    </button>
+                    <button type="button" class="tab-btn flex-1 py-4 px-6 font-medium" data-tab="generate">
+                        <i class="fa fa-magic mr-2"></i>智能生成
+                    </button>
+                </div>
+            </div>
+
+            <!-- 文案提取标签页 -->
+            <div class="tab-content card" id="extract-tab">
+                <!-- 消息显示区域 -->
+                <div id="message-container" class="mb-6 hidden"></div>
+                
+                <!-- 视频上传与链接输入区域 -->
+                <section class="mb-6">
+                    <h2 class="section-title"><i class="fa fa-cloud-upload"></i>视频上传</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- 视频文件上传 -->
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-pink-500 transition-colors duration-300" id="upload-area">
+                            <div class="upload-icon mb-4 text-gray-400">
+                                <i class="fa fa-cloud-upload text-4xl"></i>
+                            </div>
+                            <h3 class="text-lg font-medium text-gray-700 mb-2">上传视频文件</h3>
+                            <p class="text-gray-500 mb-4">支持MP4、MOV、AVI等格式，时长1-15分钟</p>
+                            <input type="file" id="video-file" accept="video/*" class="hidden">
+                            <button type="button" id="upload-btn" class="btn-pink">
+                                <i class="fa fa-upload mr-2"></i>选择文件
+                            </button>
+                            <p id="file-name" class="mt-3 text-sm text-gray-600 hidden"></p>
+                        </div>
+
+                        <!-- 视频链接输入 -->
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 hover:border-pink-500 transition-colors duration-300">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">输入视频链接</h3>
+                            <p class="text-gray-500 mb-4">支持小红书视频链接和短链接</p>
+                            <div class="flex flex-col">
+                                <input type="url" id="video-url" placeholder="请输入小红书视频链接" class="input-field mb-3">
+                                <button type="button" id="extract-btn" class="btn-green">
+                                    <i class="fa fa-link mr-2"></i>提取文案
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 处理进度显示 -->
+                <section class="mb-6 hidden" id="progress-section">
+                    <h2 class="section-title"><i class="fa fa-spinner"></i>处理进度</h2>
+                    <div class="bg-gray-100 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="progress-text" class="text-gray-700">正在处理...</span>
+                            <span id="progress-percent" class="text-gray-700">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div id="progress-bar" class="bg-pink-500 h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div id="process-steps" class="mt-3 text-sm text-gray-600">
+                            <p>1. 视频解析中...</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 文案预览与编辑区域 -->
+                <section class="mb-6 hidden" id="result-section">
+                    <h2 class="section-title"><i class="fa fa-file-text"></i>文案预览与编辑</h2>
+                    <div class="border border-gray-300 rounded-lg overflow-hidden">
+                        <div class="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center">
+                            <h3 class="font-medium text-gray-700">口播文案</h3>
+                            <div class="flex space-x-2">
+                                <button type="button" id="copy-btn" class="text-gray-600 hover:text-pink-500 transition-colors duration-300">
+                                    <i class="fa fa-copy mr-1"></i>复制
+                                </button>
+                                <button type="button" id="refresh-btn" class="text-gray-600 hover:text-pink-500 transition-colors duration-300">
+                                    <i class="fa fa-refresh mr-1"></i>刷新
+                                </button>
+                            </div>
+                        </div>
+                        <div class="relative">
+                            <textarea id="script-content" class="w-full p-4 h-64 border-none focus:outline-none resize-none" placeholder="文案内容将显示在这里..."></textarea>
+                            <!-- 加载状态指示器 -->
+                            <div id="content-loading" class="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center hidden">
+                                <div class="text-center">
+                                    <i class="fa fa-spinner fa-spin text-3xl text-pink-500 mb-2"></i>
+                                    <p class="text-gray-600">正在加载...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 导出功能 -->
+                <section class="mb-6 hidden" id="export-section">
+                    <h2 class="section-title"><i class="fa fa-download"></i>导出文案</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <button type="button" id="export-txt" class="btn-green flex items-center justify-center">
+                            <i class="fa fa-file-text-o mr-2"></i>导出TXT
+                        </button>
+                        <button type="button" id="export-word" class="btn-purple flex items-center justify-center">
+                            <i class="fa fa-file-word-o mr-2"></i>导出Word
+                        </button>
+                        <button type="button" id="export-json" class="btn-pink flex items-center justify-center">
+                            <i class="fa fa-file-code-o mr-2"></i>导出JSON
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 参考分析标签页 -->
+            <div class="tab-content card hidden" id="reference-tab">
+                <section class="mb-6">
+                    <h2 class="section-title"><i class="fa fa-user"></i>上传参考口播稿</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- 参考视频链接输入 -->
+                        <div class="border border-gray-300 rounded-lg p-6">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">参考视频链接</h3>
+                            <p class="text-gray-500 mb-4">输入你想要参考风格的小红书视频链接</p>
+                            <input type="url" id="reference-video-url" placeholder="请输入小红书视频链接" class="input-field mb-3 w-full">
+                            <button type="button" id="analyze-video-btn" class="btn-pink w-full">
+                                <i class="fa fa-play-circle mr-2"></i>分析视频风格
+                            </button>
+                        </div>
+
+                        <!-- 参考文本输入 -->
+                        <div class="border border-gray-300 rounded-lg p-6">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">参考文本内容</h3>
+                            <p class="text-gray-500 mb-4">直接输入你想要参考风格的口播稿文本</p>
+                            <textarea id="reference-script-text" rows="4" placeholder="请输入参考口播稿文本" class="textarea-field mb-3"></textarea>
+                            <button type="button" id="analyze-text-btn" class="btn-pink w-full">
+                                <i class="fa fa-file-text mr-2"></i>分析文本风格
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 分析结果展示 -->
+                <section class="mb-6 hidden" id="analysis-result-section">
+                    <h2 class="section-title"><i class="fa fa-bar-chart"></i>风格分析结果</h2>
+                    <div class="border border-gray-300 rounded-lg p-6">
+                        <div id="analysis-summary" class="mb-4 p-4 bg-pink-50 rounded-lg">
+                            <h3 class="font-medium text-pink-600 mb-2">分析总结</h3>
+                            <p id="analysis-summary-text" class="text-gray-700"></p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">语言风格</h3>
+                                <div id="style-analysis"></div>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">叙事结构</h3>
+                                <div id="structure-analysis"></div>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">内容组织</h3>
+                                <div id="content-analysis"></div>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">情感表达</h3>
+                                <div id="emotion-analysis"></div>
+                            </div>
+                        </div>
+                        <div class="mt-4 text-center">
+                            <button type="button" id="save-analysis-btn" class="btn-pink">
+                                <i class="fa fa-save mr-2"></i>保存分析结果
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 产品背景标签页 -->
+            <div class="tab-content card hidden" id="bf-tab">
+                <section class="mb-6">
+                    <h2 class="section-title"><i class="fa fa-cube"></i>产品背景文件(BF)上传</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- 文本输入 -->
+                        <div class="border border-gray-300 rounded-lg p-6">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">产品信息输入</h3>
+                            <p class="text-gray-500 mb-4">直接输入产品的核心信息、卖点等内容</p>
+                            <textarea id="bf-content" rows="6" placeholder="请输入产品背景信息，包括产品名称、核心功能、卖点、目标受众等" class="textarea-field mb-3"></textarea>
+                            <button type="button" id="analyze-bf-btn" class="btn-purple w-full">
+                                <i class="fa fa-file-text mr-2"></i>分析产品信息
+                            </button>
+                        </div>
+
+                        <!-- 文件上传 -->
+                        <div class="border border-gray-300 rounded-lg p-6">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">文件上传</h3>
+                            <p class="text-gray-500 mb-4">上传产品背景文件(BF)，支持TXT、DOCX等格式</p>
+                            <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-purple-500 transition-colors duration-300 mb-3">
+                                <div class="upload-icon mb-2 text-gray-400">
+                                    <i class="fa fa-file-text-o text-3xl"></i>
+                                </div>
+                                <p class="text-gray-500 mb-2">点击或拖拽文件到此处上传</p>
+                                <input type="file" id="bf-file" accept=".txt,.doc,.docx" class="hidden">
+                                <button type="button" id="upload-bf-btn" class="btn-purple">
+                                    <i class="fa fa-upload mr-2"></i>选择文件
+                                </button>
+                            </div>
+                            <p id="bf-file-name" class="text-sm text-gray-600 hidden"></p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 产品信息分析结果 -->
+                <section class="mb-6 hidden" id="bf-analysis-result-section">
+                    <h2 class="section-title"><i class="fa fa-cube"></i>产品信息分析结果</h2>
+                    <div class="border border-gray-300 rounded-lg p-6">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">基本信息</h3>
+                                <p><strong>产品名称：</strong><span id="product-name"></span></p>
+                                <p><strong>价格信息：</strong><span id="product-price"></span></p>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">核心功能</h3>
+                                <ul id="core-features" class="list-disc list-inside text-gray-700"></ul>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">产品卖点</h3>
+                                <ul id="selling-points" class="list-disc list-inside text-gray-700"></ul>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <h3 class="font-medium text-gray-700 mb-2">目标受众</h3>
+                                <ul id="target-audience" class="list-disc list-inside text-gray-700"></ul>
+                            </div>
+                            <div class="border border-gray-200 rounded-lg p-4 md:col-span-2">
+                                <h3 class="font-medium text-gray-700 mb-2">使用场景</h3>
+                                <ul id="usage-scenarios" class="list-disc list-inside text-gray-700"></ul>
+                            </div>
+                        </div>
+                        <div class="mt-4 text-center">
+                            <button type="button" id="save-bf-btn" class="btn-purple">
+                                <i class="fa fa-save mr-2"></i>保存产品信息
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 智能生成标签页 -->
+            <div class="tab-content card hidden" id="generate-tab">
+                <section class="mb-6">
+                    <h2 class="section-title"><i class="fa fa-magic"></i>智能口播稿生成</h2>
+                    <div class="border border-gray-300 rounded-lg p-6">
+                        <div class="mb-4">
+                            <h3 class="font-medium text-gray-700 mb-2">生成设置</h3>
+                            <p class="text-gray-500 mb-4">基于参考风格和产品信息生成口播稿</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-gray-700 mb-2">参考风格</label>
+                                <select id="reference-style" class="input-field w-full">
+                                    <option value="">请选择参考风格</option>
+                                    <option value="friendly">友好亲切</option>
+                                    <option value="recommendation">推荐种草</option>
+                                    <option value="tutorial">教程指导</option>
+                                    <option value="custom">自定义分析结果</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-gray-700 mb-2">叙事结构</label>
+                                <select id="narrative-structure" class="input-field w-full">
+                                    <option value="">请选择叙事结构</option>
+                                    <option value="narrative">叙述式</option>
+                                    <option value="steps">步骤式</option>
+                                    <option value="pros-cons">优缺点分析</option>
+                                    <option value="comparison">对比式</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 mb-2">产品信息</label>
+                            <select id="product-info-select" class="input-field w-full">
+                                <option value="">请选择产品信息</option>
+                                <option value="custom">自定义产品信息</option>
+                            </select>
+                        </div>
+                        <div class="text-center">
+                            <button type="button" id="generate-script-btn" class="btn-green">
+                                <i class="fa fa-magic mr-2"></i>生成口播稿
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 生成结果展示 -->
+                <section class="mb-6 hidden" id="generated-script-section">
+                    <h2 class="section-title"><i class="fa fa-file-text"></i>生成结果</h2>
+                    <div class="border border-gray-300 rounded-lg p-6">
+                        <div class="mb-4">
+                            <textarea id="generated-script" rows="8" class="textarea-field" placeholder="生成的口播稿将显示在这里..."></textarea>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" id="copy-generated-btn" class="btn-pink">
+                                <i class="fa fa-copy mr-2"></i>复制文案
+                            </button>
+                            <button type="button" id="refresh-generated-btn" class="btn-purple">
+                                <i class="fa fa-refresh mr-2"></i>重新生成
+                            </button>
+                            <button type="button" id="export-generated-btn" class="btn-green">
+                                <i class="fa fa-download mr-2"></i>导出文案
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- 页脚 -->
+        <footer class="text-center text-gray-500 text-sm">
+            <p>© 2024 小红书博主口播稿分析与生成工具 | 智能分析，精准生成</p>
+        </footer>
+    </div>
+
+    <script>
+        // 模拟数据 - 用于演示
+        const mockScript = `大家好，欢迎来到我的小红书频道！今天我要给大家分享一个超级实用的生活小技巧，就是如何在3分钟内快速整理好你的衣柜。
+
+首先，我们需要准备一些工具：几个收纳盒、衣架、还有分类标签。然后，按照季节把衣服分开，夏天的衣服放在一起，冬天的衣服放在一起。
+
+接下来，我们要按照颜色进行排列，这样找衣服的时候会更方便。另外，对于那些不常穿的衣服，我们可以用真空袋压缩起来，节省空间。
+
+最后，记得定期整理你的衣柜，这样才能保持整洁。好了，今天的分享就到这里，如果你觉得有用的话，记得点赞收藏哦！我们下期再见，拜拜！`;
+
+        // 标签页切换
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const tabId = this.getAttribute('data-tab');
+
+                    // 更新标签页状态
+                    tabBtns.forEach(b => b.classList.remove('tab-active'));
+                    this.classList.add('tab-active');
+
+                    // 显示对应内容
+                    tabContents.forEach(content => content.classList.add('hidden'));
+                    document.getElementById(`${tabId}-tab`).classList.remove('hidden');
+                });
+            });
+
+            // 初始化事件监听
+            initEventListeners();
+        });
+
+        function initEventListeners() {
+            // 文案提取功能
+            const uploadBtn = document.getElementById('upload-btn');
+            const videoFile = document.getElementById('video-file');
+            const fileName = document.getElementById('file-name');
+            const extractBtn = document.getElementById('extract-btn');
+            const videoUrl = document.getElementById('video-url');
+            const progressSection = document.getElementById('progress-section');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const progressPercent = document.getElementById('progress-percent');
+            const processSteps = document.getElementById('process-steps');
+            const resultSection = document.getElementById('result-section');
+            const scriptContent = document.getElementById('script-content');
+            const exportSection = document.getElementById('export-section');
+            const exportTxt = document.getElementById('export-txt');
+            const exportWord = document.getElementById('export-word');
+            const exportJson = document.getElementById('export-json');
+            const copyBtn = document.getElementById('copy-btn');
+            const refreshBtn = document.getElementById('refresh-btn');
+
+            // 参考分析功能
+            const analyzeVideoBtn = document.getElementById('analyze-video-btn');
+            const analyzeTextBtn = document.getElementById('analyze-text-btn');
+            const referenceVideoUrl = document.getElementById('reference-video-url');
+            const referenceScriptText = document.getElementById('reference-script-text');
+            const analysisResultSection = document.getElementById('analysis-result-section');
+            const analysisSummaryText = document.getElementById('analysis-summary-text');
+            const styleAnalysis = document.getElementById('style-analysis');
+            const structureAnalysis = document.getElementById('structure-analysis');
+            const contentAnalysis = document.getElementById('content-analysis');
+            const emotionAnalysis = document.getElementById('emotion-analysis');
+            const saveAnalysisBtn = document.getElementById('save-analysis-btn');
+
+            // 产品背景功能
+            const analyzeBfBtn = document.getElementById('analyze-bf-btn');
+            const bfContent = document.getElementById('bf-content');
+            const bfAnalysisResultSection = document.getElementById('bf-analysis-result-section');
+            const productName = document.getElementById('product-name');
+            const productPrice = document.getElementById('product-price');
+            const coreFeatures = document.getElementById('core-features');
+            const sellingPoints = document.getElementById('selling-points');
+            const targetAudience = document.getElementById('target-audience');
+            const usageScenarios = document.getElementById('usage-scenarios');
+            const saveBfBtn = document.getElementById('save-bf-btn');
+
+            // 智能生成功能
+            const generateScriptBtn = document.getElementById('generate-script-btn');
+            const generatedScriptSection = document.getElementById('generated-script-section');
+            const generatedScript = document.getElementById('generated-script');
+            const copyGeneratedBtn = document.getElementById('copy-generated-btn');
+            const refreshGeneratedBtn = document.getElementById('refresh-generated-btn');
+            const exportGeneratedBtn = document.getElementById('export-generated-btn');
+
+            // 上传按钮点击事件
+            uploadBtn.addEventListener('click', () => {
+                videoFile.click();
+            });
+
+            // 文件选择事件
+            videoFile.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    
+                    // 验证文件类型
+                    if (!file.type.startsWith('video/')) {
+                        showMessage('请选择视频文件', 'error');
+                        return;
+                    }
+                    
+                    // 验证文件大小（500MB限制）
+                    if (file.size > 500 * 1024 * 1024) {
+                        showMessage('视频文件过大，请上传500MB以内的文件', 'error');
+                        return;
+                    }
+                    
+                    fileName.textContent = file.name;
+                    fileName.classList.remove('hidden');
+                    
+                    // 显示加载状态
+                    progressSection.classList.remove('hidden');
+                    resultSection.classList.add('hidden');
+                    exportSection.classList.add('hidden');
+                    hideMessage();
+                    
+                    // 更新进度提示
+                    updateProgress(10, '正在上传视频文件...');
+                    
+                    try {
+                        // 创建FormData对象
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        
+                        // 调用API上传视频文件
+                        updateProgress(30, '正在解析视频...');
+                        const response = await fetch('/api/upload-video', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `API调用失败：${response.status}`);
+                        }
+                        
+                        updateProgress(70, '正在提取文案...');
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            updateProgress(100, '文案提取完成！');
+                            
+                            // 显示结果
+                            scriptContent.value = data.data.script;
+                            resultSection.classList.remove('hidden');
+                            exportSection.classList.remove('hidden');
+                            
+                            // 显示成功消息
+                            showMessage('文案提取成功！', 'success');
+                            
+                            // 显示视频信息
+                            const videoInfo = data.data.video_info;
+                            console.log('视频信息:', videoInfo);
+                        } else {
+                            throw new Error(data.message || '提取失败');
+                        }
+                    } catch (error) {
+                        showMessage(`提取失败：${error.message}`, 'error');
+                        console.error('错误详情:', error);
+                    } finally {
+                        // 延迟隐藏进度条
+                        setTimeout(() => {
+                            progressSection.classList.add('hidden');
+                        }, 500);
+                    }
+                }
+            });
+
+            // 提取按钮点击事件
+            extractBtn.addEventListener('click', async () => {
+                const url = videoUrl.value.trim();
+                if (url) {
+                    // 显示加载状态
+                    progressSection.classList.remove('hidden');
+                    resultSection.classList.add('hidden');
+                    exportSection.classList.add('hidden');
+                    hideMessage();
+                    
+                    try {
+                        updateProgress(10, '正在解析视频链接...');
+                        
+                        // 调用API
+                        const response = await fetch('/api/extract-from-url', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ url })
+                        });
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `API调用失败：${response.status}`);
+                        }
+                        
+                        updateProgress(70, '正在提取文案...');
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            updateProgress(100, '文案提取完成！');
+                            
+                            // 显示结果
+                            scriptContent.value = data.data.script;
+                            resultSection.classList.remove('hidden');
+                            exportSection.classList.remove('hidden');
+                            
+                            // 显示成功消息
+                            showMessage('文案提取成功！', 'success');
+                        } else {
+                            throw new Error(data.message || '提取失败');
+                        }
+                    } catch (error) {
+                        showMessage(`提取失败：${error.message}`, 'error');
+                        console.error('错误详情:', error);
+                    } finally {
+                        // 延迟隐藏进度条
+                        setTimeout(() => {
+                            progressSection.classList.add('hidden');
+                        }, 500);
+                    }
+                } else {
+                    showMessage('请输入有效的视频链接', 'warning');
+                }
+            });
+
+            // 分析视频风格
+            analyzeVideoBtn.addEventListener('click', async () => {
+                const url = referenceVideoUrl.value.trim();
+                if (url) {
+                    try {
+                        // 显示加载状态
+                        progressSection.classList.remove('hidden');
+                        
+                        // 调用API
+                        const response = await fetch('/api/upload-reference', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ video_url: url })
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`API调用失败：${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            // 显示分析结果
+                            displayAnalysisResult(data.data.analysis);
+                            analysisResultSection.classList.remove('hidden');
+                        } else {
+                            throw new Error(data.message || '分析失败');
+                        }
+                    } catch (error) {
+                        alert(`分析失败：${error.message}`);
+                    } finally {
+                        progressSection.classList.add('hidden');
+                    }
+                } else {
+                    alert('请输入有效的视频链接');
+                }
+            });
+
+            // 分析文本风格
+            analyzeTextBtn.addEventListener('click', async () => {
+                const text = referenceScriptText.value.trim();
+                if (text) {
+                    try {
+                        // 显示加载状态
+                        progressSection.classList.remove('hidden');
+                        
+                        // 调用API
+                        const response = await fetch('/api/upload-reference', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ script_text: text })
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`API调用失败：${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            // 显示分析结果
+                            displayAnalysisResult(data.data.analysis);
+                            analysisResultSection.classList.remove('hidden');
+                        } else {
+                            throw new Error(data.message || '分析失败');
+                        }
+                    } catch (error) {
+                        alert(`分析失败：${error.message}`);
+                    } finally {
+                        progressSection.classList.add('hidden');
+                    }
+                } else {
+                    alert('请输入参考文本内容');
+                }
+            });
+
+            // 分析产品信息
+            analyzeBfBtn.addEventListener('click', async () => {
+                const content = bfContent.value.trim();
+                if (content) {
+                    try {
+                        // 显示加载状态
+                        progressSection.classList.remove('hidden');
+                        
+                        // 调用API
+                        const response = await fetch('/api/upload-bf', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ content })
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`API调用失败：${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            // 显示分析结果
+                            displayBfAnalysisResult(data.data);
+                            bfAnalysisResultSection.classList.remove('hidden');
+                        } else {
+                            throw new Error(data.message || '分析失败');
+                        }
+                    } catch (error) {
+                        alert(`分析失败：${error.message}`);
+                    } finally {
+                        progressSection.classList.add('hidden');
+                    }
+                } else {
+                    alert('请输入产品背景信息');
+                }
+            });
+
+            // 上传产品背景文件
+            const uploadBfBtn = document.getElementById('upload-bf-btn');
+            const bfFile = document.getElementById('bf-file');
+            const bfFileName = document.getElementById('bf-file-name');
+
+            uploadBfBtn.addEventListener('click', () => {
+                bfFile.click();
+            });
+
+            bfFile.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    bfFileName.textContent = file.name;
+                    bfFileName.classList.remove('hidden');
+                    
+                    // 读取文件内容
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        bfContent.value = e.target.result;
+                    };
+                    reader.readAsText(file);
+                }
+            });
+
+            // 生成口播稿
+            generateScriptBtn.addEventListener('click', async () => {
+                try {
+                    // 显示加载状态
+                    progressSection.classList.remove('hidden');
+                    
+                    // 模拟API调用
+                    setTimeout(() => {
+                        // 显示生成结果
+                        generatedScript.value = mockScript;
+                        generatedScriptSection.classList.remove('hidden');
+                        progressSection.classList.add('hidden');
+                    }, 1500);
+                } catch (error) {
+                    alert(`生成失败：${error.message}`);
+                    progressSection.classList.add('hidden');
+                }
+            });
+
+            // 复制生成的文案
+            copyGeneratedBtn.addEventListener('click', () => {
+                const generatedScript = document.getElementById('generated-script');
+                generatedScript.select();
+                document.execCommand('copy');
+                alert('文案已复制到剪贴板');
+            });
+
+            // 重新生成文案
+            refreshGeneratedBtn.addEventListener('click', () => {
+                const generatedScript = document.getElementById('generated-script');
+                generatedScript.value = mockScript;
+                alert('文案已刷新');
+            });
+
+            // 导出生成的文案
+            exportGeneratedBtn.addEventListener('click', () => {
+                const content = document.getElementById('generated-script').value;
+                downloadFile(content, '生成的口播文案.txt', 'text/plain');
+            });
+
+            // 导出TXT
+            exportTxt.addEventListener('click', async () => {
+                const content = scriptContent.value;
+                try {
+                    const response = await fetch('/api/export', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ script: content, format: 'txt' })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`导出失败：${response.status}`);
+                    }
+                    
+                    // 下载文件
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '小红书口播文案.txt';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    alert(`导出失败：${error.message}`);
+                    // 降级为客户端下载
+                    downloadFile(content, '小红书口播文案.txt', 'text/plain');
+                }
+            });
+
+            // 导出Word (模拟)
+            exportWord.addEventListener('click', async () => {
+                const content = scriptContent.value;
+                alert('Word格式导出功能已触发，实际项目中会生成.docx文件');
+                downloadFile(content, '小红书口播文案.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            });
+
+            // 导出JSON
+            exportJson.addEventListener('click', async () => {
+                const content = scriptContent.value;
+                try {
+                    const response = await fetch('/api/export', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ script: content, format: 'json' })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`导出失败：${response.status}`);
+                    }
+                    
+                    // 下载文件
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '小红书口播文案.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    alert(`导出失败：${error.message}`);
+                    // 降级为客户端下载
+                    const jsonData = {
+                        title: '小红书口播文案',
+                        content: content,
+                        timestamp: new Date().toISOString(),
+                        source: '小红书视频'
+                    };
+                    downloadFile(JSON.stringify(jsonData, null, 2), '小红书口播文案.json', 'application/json');
+                }
+            });
+
+            // 复制文案
+            copyBtn.addEventListener('click', async () => {
+                const content = scriptContent.value;
+                if (!content) {
+                    alert('没有可复制的文案内容');
+                    return;
+                }
+                
+                try {
+                    // 使用现代API复制
+                    await navigator.clipboard.writeText(content);
+                    
+                    // 显示成功提示
+                    showCopySuccess();
+                } catch (err) {
+                    // 降级方案：使用传统方法
+                    scriptContent.select();
+                    document.execCommand('copy');
+                    
+                    // 显示成功提示
+                    showCopySuccess();
+                }
+            });
+
+            // 显示复制成功提示
+            function showCopySuccess() {
+                const copyBtn = document.getElementById('copy-btn');
+                const originalText = copyBtn.innerHTML;
+                
+                // 更新按钮样式和文本
+                copyBtn.innerHTML = '<i class="fa fa-check mr-1"></i>已复制';
+                copyBtn.classList.remove('text-gray-600');
+                copyBtn.classList.add('text-green-500');
+                
+                // 2秒后恢复原状
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.classList.remove('text-green-500');
+                    copyBtn.classList.add('text-gray-600');
+                }, 2000);
+            }
+
+            // 刷新文案
+            refreshBtn.addEventListener('click', () => {
+                // 模拟重新生成
+                scriptContent.value = mockScript;
+                alert('文案已刷新');
+            });
+
+            // 上传区域点击事件
+            document.getElementById('upload-area').addEventListener('click', () => {
+                videoFile.click();
+            });
+
+            // 保存分析结果
+            saveAnalysisBtn.addEventListener('click', () => {
+                alert('分析结果已保存，可在智能生成中使用');
+            });
+
+            // 保存产品信息
+            saveBfBtn.addEventListener('click', () => {
+                alert('产品信息已保存，可在智能生成中使用');
+            });
+
+            // 显示消息
+            function showMessage(message, type = 'info') {
+                const messageContainer = document.getElementById('message-container');
+                if (!messageContainer) return;
+
+                let messageClass = '';
+                let icon = '';
+
+                switch (type) {
+                    case 'error':
+                        messageClass = 'error-message';
+                        icon = '<i class="fa fa-exclamation-circle mr-2"></i>';
+                        break;
+                    case 'success':
+                        messageClass = 'success-message';
+                        icon = '<i class="fa fa-check-circle mr-2"></i>';
+                        break;
+                    case 'warning':
+                        messageClass = 'warning-message';
+                        icon = '<i class="fa fa-exclamation-triangle mr-2"></i>';
+                        break;
+                    default:
+                        messageClass = 'bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg mb-4';
+                        icon = '<i class="fa fa-info-circle mr-2"></i>';
+                }
+
+                messageContainer.innerHTML = `
+                    <div class="${messageClass}">
+                        ${icon}${message}
+                    </div>
+                `;
+                messageContainer.classList.remove('hidden');
+
+                // 5秒后自动隐藏
+                setTimeout(() => {
+                    messageContainer.classList.add('hidden');
+                }, 5000);
+            }
+
+            // 隐藏消息
+            function hideMessage() {
+                const messageContainer = document.getElementById('message-container');
+                if (messageContainer) {
+                    messageContainer.classList.add('hidden');
+                }
+            }
+        }
+
+        // 更新进度条
+        function updateProgress(percent, text) {
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const progressPercent = document.getElementById('progress-percent');
+            const processSteps = document.getElementById('process-steps');
+
+            if (progressBar) {
+                progressBar.style.width = `${percent}%`;
+            }
+            if (progressPercent) {
+                progressPercent.textContent = `${percent}%`;
+            }
+            if (progressText) {
+                progressText.textContent = text;
+            }
+            if (processSteps) {
+                const steps = [
+                    '1. 视频解析中...',
+                    '2. 音频提取中...',
+                    '3. 语音识别中...',
+                    '4. 文本清洗与格式化...',
+                    '5. 文案生成完成...'
+                ];
+                const stepIndex = Math.floor(percent / 20);
+                if (stepIndex < steps.length) {
+                    processSteps.innerHTML = steps.slice(0, stepIndex + 1).map(step => `<p>${step}</p>`).join('');
+                }
+            }
+        }
+
+        // 模拟处理过程
+        function simulateProcessing() {
+            const progressSection = document.getElementById('progress-section');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const progressPercent = document.getElementById('progress-percent');
+            const processSteps = document.getElementById('process-steps');
+            const resultSection = document.getElementById('result-section');
+            const scriptContent = document.getElementById('script-content');
+            const exportSection = document.getElementById('export-section');
+
+            progressSection.classList.remove('hidden');
+            resultSection.classList.add('hidden');
+            exportSection.classList.add('hidden');
+
+            let progress = 0;
+            const steps = [
+                '1. 视频解析中...',
+                '2. 音频提取中...',
+                '3. 语音识别中...',
+                '4. 文本清洗与格式化...',
+                '5. 文案生成完成...'
+            ];
+
+            const interval = setInterval(() => {
+                progress += 5;
+                progressBar.style.width = `${progress}%`;
+                progressPercent.textContent = `${progress}%`;
+
+                // 更新步骤
+                const stepIndex = Math.floor(progress / 20);
+                if (stepIndex < steps.length) {
+                    processSteps.innerHTML = steps.slice(0, stepIndex + 1).map(step => `<p>${step}</p>`).join('');
+                }
+
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    setTimeout(() => {
+                        // 显示结果
+                        showResult();
+                    }, 500);
+                }
+            }, 200);
+        }
+
+        // 显示结果
+        function showResult() {
+            const progressSection = document.getElementById('progress-section');
+            const resultSection = document.getElementById('result-section');
+            const scriptContent = document.getElementById('script-content');
+            const exportSection = document.getElementById('export-section');
+
+            progressSection.classList.add('hidden');
+            resultSection.classList.remove('hidden');
+            exportSection.classList.remove('hidden');
+            scriptContent.value = mockScript;
+        }
+
+        // 显示分析结果
+        function displayAnalysisResult(analysis) {
+            const analysisSummaryText = document.getElementById('analysis-summary-text');
+            const styleAnalysis = document.getElementById('style-analysis');
+            const structureAnalysis = document.getElementById('structure-analysis');
+            const contentAnalysis = document.getElementById('content-analysis');
+            const emotionAnalysis = document.getElementById('emotion-analysis');
+
+            // 显示分析总结
+            analysisSummaryText.textContent = analysis.summary || '分析完成，未生成总结';
+
+            // 显示语言风格分析
+            const style = analysis.style || {};
+            styleAnalysis.innerHTML = `
+                <p><strong>语气：</strong>${style.tone || '未知'}</p>
+                <p><strong>风格特点：</strong>${style.style ? style.style.join('、') : '未知'}</p>
+                <p><strong>句子数量：</strong>${style.sentence_count || 0}</p>
+                <p><strong>平均句长：</strong>${style.average_sentence_length || 0} 词</p>
+                <p><strong>词汇多样性：</strong>${style.vocabulary_diversity || 0}</p>
+            `;
+
+            // 显示叙事结构分析
+            const narrative = analysis.narrative || {};
+            structureAnalysis.innerHTML = `
+                <p><strong>结构类型：</strong>${narrative.structure ? narrative.structure.join('、') : '未知'}</p>
+                <p><strong>主体结构：</strong>${narrative.body ? narrative.body.join('、') : '未知'}</p>
+                <p><strong>过渡词：</strong>${narrative.transitions ? narrative.transitions.join('、') : '无'}</p>
+            `;
+
+            // 显示内容组织分析
+            const content = analysis.content || {};
+            contentAnalysis.innerHTML = `
+                <p><strong>组织方式：</strong>${content.organization ? content.organization.join('、') : '未知'}</p>
+                <p><strong>节奏：</strong>${content.pace || '未知'}</p>
+                <p><strong>关键点：</strong>${content.key_points ? content.key_points.slice(0, 3).join('、') : '无'}</p>
+            `;
+
+            // 显示情感表达分析
+            const emotion = analysis.emotion || {};
+            emotionAnalysis.innerHTML = `
+                <p><strong>情感倾向：</strong>${emotion.emotion ? emotion.emotion.join('、') : '未知'}</p>
+                <p><strong>情感强度：</strong>${emotion.intensity || '未知'}</p>
+                <p><strong>表达方式：</strong>${emotion.expression ? emotion.expression.join('、') : '未知'}</p>
+            `;
+        }
+
+        // 显示产品信息分析结果
+        function displayBfAnalysisResult(productInfo) {
+            document.getElementById('product-name').textContent = productInfo.product_name || '未知';
+            document.getElementById('product-price').textContent = productInfo.price_info || '未知';
+
+            // 显示核心功能
+            const coreFeatures = document.getElementById('core-features');
+            coreFeatures.innerHTML = '';
+            if (productInfo.core_features && productInfo.core_features.length > 0) {
+                productInfo.core_features.forEach(feature => {
+                    const li = document.createElement('li');
+                    li.textContent = feature;
+                    coreFeatures.appendChild(li);
+                });
+            } else {
+                coreFeatures.innerHTML = '<li>无</li>';
+            }
+
+            // 显示卖点
+            const sellingPoints = document.getElementById('selling-points');
+            sellingPoints.innerHTML = '';
+            if (productInfo.selling_points && productInfo.selling_points.length > 0) {
+                productInfo.selling_points.forEach(point => {
+                    const li = document.createElement('li');
+                    li.textContent = point;
+                    sellingPoints.appendChild(li);
+                });
+            } else {
+                sellingPoints.innerHTML = '<li>无</li>';
+            }
+
+            // 显示目标受众
+            const targetAudience = document.getElementById('target-audience');
+            targetAudience.innerHTML = '';
+            if (productInfo.target_audience && productInfo.target_audience.length > 0) {
+                productInfo.target_audience.forEach(audience => {
+                    const li = document.createElement('li');
+                    li.textContent = audience;
+                    targetAudience.appendChild(li);
+                });
+            } else {
+                targetAudience.innerHTML = '<li>无</li>';
+            }
+
+            // 显示使用场景
+            const usageScenarios = document.getElementById('usage-scenarios');
+            usageScenarios.innerHTML = '';
+            if (productInfo.usage_scenarios && productInfo.usage_scenarios.length > 0) {
+                productInfo.usage_scenarios.forEach(scenario => {
+                    const li = document.createElement('li');
+                    li.textContent = scenario;
+                    usageScenarios.appendChild(li);
+                });
+            } else {
+                usageScenarios.innerHTML = '<li>无</li>';
+            }
+        }
+
+        // 下载文件
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
