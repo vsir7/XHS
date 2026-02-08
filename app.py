@@ -11,6 +11,7 @@ import tempfile
 import json
 import re
 import requests
+import random
 from datetime import datetime
 
 # 创建FastAPI应用
@@ -1215,6 +1216,167 @@ async def analyze_script_endpoint(data: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析失败：{str(e)}")
+
+def rewrite_script_for_xiaohongshu(original_script):
+    """
+    将提取的文案改写为小红书风格
+    保持核心信息，增强吸引力和互动性
+    """
+    try:
+        if not original_script or not original_script.strip():
+            return ""
+        
+        # 1. 分析原文结构
+        sentences = re.split(r'[，。！？；：,.!?:;]', original_script)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        if len(sentences) < 2:
+            return original_script
+        
+        # 2. 小红书风格特征库
+        style_elements = {
+            "openings": [
+                "姐妹们！",
+                "家人们！",
+                "宝子们！",
+                "集美们！",
+                "大家好！",
+                "姐妹们听我说！",
+                "今天必须和你们分享！"
+            ],
+            "emphasizers": [
+                "真的绝了！",
+                "太香了！",
+                "绝绝子！",
+                "yyds！",
+                "太好用了！",
+                "真的爱了！",
+                "必须安利！",
+                "超级推荐！",
+                "真的绝了！",
+                "太赞了！"
+            ],
+            "transitions": [
+                "而且哦，",
+                "还有呢，",
+                "重点是，",
+                "最关键的是，",
+                "而且，",
+                "另外，",
+                "还有，"
+            ],
+            "endings": [
+                "姐妹们冲鸭！",
+                "快去试试！",
+                "真的值得！",
+                "必须拥有！",
+                "赶紧冲！",
+                "姐妹们快冲！",
+                "真的太香了！",
+                "入股不亏！"
+            ],
+            "emojis": ["✨", "💖", "🔥", "💕", "🎉", "💫", "💗", "🌟", "⭐", "💝"],
+            "hashtags": ["#小红书", "#好物推荐", "#宝藏好物", "#必入清单", "#种草", "#好物分享"]
+        }
+        
+        # 3. 提取关键信息（产品/主题）
+        key_words = []
+        for sentence in sentences:
+            words = re.findall(r'[\u4e00-\u9fa5]{2,}', sentence)
+            key_words.extend(words[:2])
+        
+        key_words = list(set(key_words))[:5]
+        
+        # 4. 改写文案
+        rewritten_parts = []
+        
+        # 开头
+        opening = style_elements["openings"][0]
+        rewritten_parts.append(opening)
+        
+        # 主体内容（改写前3-5个句子）
+        main_content = sentences[:5]
+        for i, sentence in enumerate(main_content):
+            if i == 0:
+                # 第一个句子，强调重要性
+                rewritten_parts.append(f"今天发现一个{random.choice(['超棒的', '绝绝子的', '太香了的'])}东西！")
+            elif i == len(main_content) - 1:
+                # 最后一个主体句子，添加强调词
+                rewritten_parts.append(f"{sentence} {random.choice(style_elements['emphasizers'])}")
+            else:
+                # 中间句子，添加过渡词
+                if i % 2 == 0:
+                    rewritten_parts.append(f"{random.choice(style_elements['transitions'])}{sentence}")
+                else:
+                    rewritten_parts.append(sentence)
+        
+        # 添加小红书特色的表达
+        xhs_style_additions = [
+            "真的太爱了！",
+            "姐妹们一定要试试！",
+            "亲测有效！",
+            "真心推荐！",
+            "用了就回不去！"
+        ]
+        
+        if len(rewritten_parts) < 6:
+            rewritten_parts.append(random.choice(xhs_style_additions))
+        
+        # 结尾
+        ending = style_elements["endings"][0]
+        rewritten_parts.append(ending)
+        
+        # 5. 添加emoji和标签
+        final_script = ' '.join(rewritten_parts)
+        
+        # 随机添加emoji
+        for _ in range(3):
+            emoji = random.choice(style_elements["emojis"])
+            pos = random.randint(0, len(final_script))
+            final_script = final_script[:pos] + emoji + final_script[pos:]
+        
+        # 添加标签
+        tags = random.sample(style_elements["hashtags"], 3)
+        final_script += '\n\n' + ' '.join(tags)
+        
+        # 6. 格式化输出
+        final_script = final_script.strip()
+        
+        # 确保文案长度合理
+        if len(final_script) < 50:
+            final_script += f"\n\n{random.choice(style_elements['emphasizers'])}"
+        
+        return final_script
+        
+    except Exception as e:
+        print(f"文案改写失败：{str(e)}")
+        return original_script
+
+@app.post("/api/rewrite-script")
+async def rewrite_script_endpoint(data: dict):
+    """
+    改写文案为小红书风格
+    """
+    try:
+        original_script = data.get("script")
+        if not original_script:
+            raise HTTPException(status_code=400, detail="缺少script参数")
+        
+        # 改写文案
+        rewritten_script = rewrite_script_for_xiaohongshu(original_script)
+        
+        return {
+            "success": True,
+            "message": "文案改写成功",
+            "data": {
+                "original_script": original_script,
+                "rewritten_script": rewritten_script
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"改写失败：{str(e)}")
 
 @app.post("/api/upload-reference")
 async def upload_reference(data: dict):

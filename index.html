@@ -107,7 +107,7 @@
                             <div class="flex flex-col">
                                 <input type="url" id="video-url" placeholder="请输入小红书视频链接" class="input-field mb-3">
                                 <button type="button" id="extract-btn" class="btn-green">
-                                    <i class="fa fa-link mr-2"></i>提取文案
+                                    <i class="fa fa-link mr-2"></i>生成文案
                                 </button>
                             </div>
                         </div>
@@ -134,25 +134,44 @@
                 <!-- 文案预览与编辑区域 -->
                 <section class="mb-6 hidden" id="result-section">
                     <h2 class="section-title"><i class="fa fa-file-text"></i>文案预览与编辑</h2>
-                    <div class="border border-gray-300 rounded-lg overflow-hidden">
+                    
+                    <!-- 原始文案 -->
+                    <div class="border border-gray-300 rounded-lg overflow-hidden mb-4">
                         <div class="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center">
-                            <h3 class="font-medium text-gray-700">口播文案</h3>
+                            <h3 class="font-medium text-gray-700">原始文案</h3>
                             <div class="flex space-x-2">
-                                <button type="button" id="copy-btn" class="text-gray-600 hover:text-pink-500 transition-colors duration-300">
+                                <button type="button" id="copy-original-btn" class="text-gray-600 hover:text-pink-500 transition-colors duration-300">
                                     <i class="fa fa-copy mr-1"></i>复制
                                 </button>
-                                <button type="button" id="refresh-btn" class="text-gray-600 hover:text-pink-500 transition-colors duration-300">
-                                    <i class="fa fa-refresh mr-1"></i>刷新
+                                <button type="button" id="rewrite-btn" class="text-pink-500 hover:text-pink-600 transition-colors duration-300 font-medium">
+                                    <i class="fa fa-magic mr-1"></i>改写文案
                                 </button>
                             </div>
                         </div>
                         <div class="relative">
                             <textarea id="script-content" class="w-full p-4 h-64 border-none focus:outline-none resize-none" placeholder="文案内容将显示在这里..."></textarea>
-                            <!-- 加载状态指示器 -->
-                            <div id="content-loading" class="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center hidden">
+                        </div>
+                    </div>
+                    
+                    <!-- 改写后的文案 -->
+                    <div class="border border-pink-200 rounded-lg overflow-hidden hidden" id="rewritten-section">
+                        <div class="bg-pink-50 px-4 py-2 border-b border-pink-200 flex justify-between items-center">
+                            <h3 class="font-medium text-pink-600">改写后文案</h3>
+                            <div class="flex space-x-2">
+                                <button type="button" id="copy-rewritten-btn" class="text-pink-600 hover:text-pink-700 transition-colors duration-300">
+                                    <i class="fa fa-copy mr-1"></i>复制
+                                </button>
+                                <button type="button" id="apply-rewritten-btn" class="text-pink-600 hover:text-pink-700 transition-colors duration-300">
+                                    <i class="fa fa-check mr-1"></i>使用此文案
+                                </button>
+                            </div>
+                        </div>
+                        <div class="relative">
+                            <textarea id="rewritten-content" class="w-full p-4 h-64 border-none focus:outline-none resize-none bg-pink-50" placeholder="改写后的文案将显示在这里..."></textarea>
+                            <div id="rewrite-loading" class="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center hidden">
                                 <div class="text-center">
                                     <i class="fa fa-spinner fa-spin text-3xl text-pink-500 mb-2"></i>
-                                    <p class="text-gray-600">正在加载...</p>
+                                    <p class="text-gray-600">正在改写文案...</p>
                                 </div>
                             </div>
                         </div>
@@ -434,8 +453,13 @@
             const exportTxt = document.getElementById('export-txt');
             const exportWord = document.getElementById('export-word');
             const exportJson = document.getElementById('export-json');
-            const copyBtn = document.getElementById('copy-btn');
-            const refreshBtn = document.getElementById('refresh-btn');
+            const copyOriginalBtn = document.getElementById('copy-original-btn');
+            const rewriteBtn = document.getElementById('rewrite-btn');
+            const rewrittenSection = document.getElementById('rewritten-section');
+            const rewrittenContent = document.getElementById('rewritten-content');
+            const copyRewrittenBtn = document.getElementById('copy-rewritten-btn');
+            const applyRewrittenBtn = document.getElementById('apply-rewritten-btn');
+            const rewriteLoading = document.getElementById('rewrite-loading');
 
             // 参考分析功能
             const analyzeVideoBtn = document.getElementById('analyze-video-btn');
@@ -793,7 +817,12 @@
 
             // 导出TXT
             exportTxt.addEventListener('click', async () => {
-                const content = scriptContent.value;
+                const content = rewrittenSection.classList.contains('hidden') ? scriptContent.value : rewrittenContent.value;
+                if (!content) {
+                    showMessage('没有可导出的文案内容', 'warning');
+                    return;
+                }
+                
                 try {
                     const response = await fetch('/api/export', {
                         method: 'POST',
@@ -818,9 +847,65 @@
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                 } catch (error) {
-                    alert(`导出失败：${error.message}`);
+                    showMessage(`导出失败：${error.message}`, 'error');
                     // 降级为客户端下载
                     downloadFile(content, '小红书口播文案.txt', 'text/plain');
+                }
+            });
+
+            // 导出Word (模拟)
+            exportWord.addEventListener('click', async () => {
+                const content = rewrittenSection.classList.contains('hidden') ? scriptContent.value : rewrittenContent.value;
+                if (!content) {
+                    showMessage('没有可导出的文案内容', 'warning');
+                    return;
+                }
+                
+                alert('Word格式导出功能已触发，实际项目中会生成.docx文件');
+                downloadFile(content, '小红书口播文案.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            });
+
+            // 导出JSON
+            exportJson.addEventListener('click', async () => {
+                const content = rewrittenSection.classList.contains('hidden') ? scriptContent.value : rewrittenContent.value;
+                if (!content) {
+                    showMessage('没有可导出的文案内容', 'warning');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/export', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ script: content, format: 'json' })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`导出失败：${response.status}`);
+                    }
+                    
+                    // 下载文件
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '小红书口播文案.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    showMessage(`导出失败：${error.message}`, 'error');
+                    // 降级为客户端下载
+                    const jsonData = {
+                        title: '小红书口播文案',
+                        content: content,
+                        timestamp: new Date().toISOString(),
+                        source: '小红书视频'
+                    };
+                    downloadFile(JSON.stringify(jsonData, null, 2), '小红书口播文案.json', 'application/json');
                 }
             });
 
@@ -870,54 +955,127 @@
                 }
             });
 
-            // 复制文案
-            copyBtn.addEventListener('click', async () => {
+            // 复制原始文案
+            copyOriginalBtn.addEventListener('click', async () => {
                 const content = scriptContent.value;
                 if (!content) {
-                    alert('没有可复制的文案内容');
+                    showMessage('没有可复制的文案内容', 'warning');
                     return;
                 }
                 
                 try {
-                    // 使用现代API复制
                     await navigator.clipboard.writeText(content);
-                    
-                    // 显示成功提示
-                    showCopySuccess();
+                    showCopySuccess(copyOriginalBtn, '已复制');
                 } catch (err) {
-                    // 降级方案：使用传统方法
                     scriptContent.select();
                     document.execCommand('copy');
-                    
-                    // 显示成功提示
-                    showCopySuccess();
+                    showCopySuccess(copyOriginalBtn, '已复制');
                 }
             });
 
+            // 改写文案
+            rewriteBtn.addEventListener('click', async () => {
+                const originalContent = scriptContent.value;
+                if (!originalContent) {
+                    showMessage('请先提取文案内容', 'warning');
+                    return;
+                }
+                
+                // 显示加载状态
+                rewriteLoading.classList.remove('hidden');
+                
+                try {
+                    const response = await fetch('/api/rewrite-script', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ script: originalContent })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || '改写失败');
+                    }
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        // 显示改写后的文案
+                        rewrittenContent.value = data.data.rewritten_script;
+                        rewrittenSection.classList.remove('hidden');
+                        
+                        // 显示成功消息
+                        showMessage('文案改写成功！', 'success');
+                        
+                        // 滚动到改写区域
+                        rewrittenSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    } else {
+                        throw new Error(data.message || '改写失败');
+                    }
+                } catch (error) {
+                    showMessage(`改写失败：${error.message}`, 'error');
+                    console.error('改写错误:', error);
+                } finally {
+                    rewriteLoading.classList.add('hidden');
+                }
+            });
+
+            // 复制改写后的文案
+            copyRewrittenBtn.addEventListener('click', async () => {
+                const content = rewrittenContent.value;
+                if (!content) {
+                    showMessage('没有可复制的文案内容', 'warning');
+                    return;
+                }
+                
+                try {
+                    await navigator.clipboard.writeText(content);
+                    showCopySuccess(copyRewrittenBtn, '已复制');
+                } catch (err) {
+                    rewrittenContent.select();
+                    document.execCommand('copy');
+                    showCopySuccess(copyRewrittenBtn, '已复制');
+                }
+            });
+
+            // 使用改写后的文案
+            applyRewrittenBtn.addEventListener('click', () => {
+                const rewrittenText = rewrittenContent.value;
+                if (!rewrittenText) {
+                    showMessage('没有可使用的文案内容', 'warning');
+                    return;
+                }
+                
+                // 将改写后的文案应用到原始文案区域
+                scriptContent.value = rewrittenText;
+                
+                // 隐藏改写区域
+                rewrittenSection.classList.add('hidden');
+                
+                // 显示成功消息
+                showMessage('已应用改写后的文案', 'success');
+            });
+
             // 显示复制成功提示
-            function showCopySuccess() {
-                const copyBtn = document.getElementById('copy-btn');
-                const originalText = copyBtn.innerHTML;
+            function showCopySuccess(btn, text) {
+                const originalText = btn.innerHTML;
                 
                 // 更新按钮样式和文本
-                copyBtn.innerHTML = '<i class="fa fa-check mr-1"></i>已复制';
-                copyBtn.classList.remove('text-gray-600');
-                copyBtn.classList.add('text-green-500');
+                btn.innerHTML = `<i class="fa fa-check mr-1"></i>${text}`;
+                btn.classList.remove('text-gray-600', 'text-pink-600');
+                btn.classList.add('text-green-500');
                 
                 // 2秒后恢复原状
                 setTimeout(() => {
-                    copyBtn.innerHTML = originalText;
-                    copyBtn.classList.remove('text-green-500');
-                    copyBtn.classList.add('text-gray-600');
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('text-green-500');
+                    if (btn.id === 'copy-original-btn') {
+                        btn.classList.add('text-gray-600');
+                    } else {
+                        btn.classList.add('text-pink-600');
+                    }
                 }, 2000);
             }
-
-            // 刷新文案
-            refreshBtn.addEventListener('click', () => {
-                // 模拟重新生成
-                scriptContent.value = mockScript;
-                alert('文案已刷新');
-            });
 
             // 上传区域点击事件
             document.getElementById('upload-area').addEventListener('click', () => {
