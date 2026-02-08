@@ -14,6 +14,11 @@ import requests
 import random
 from datetime import datetime
 
+# Coze API配置
+COZE_API_URL = "https://api.coze.cn/v1/workflow/stream_run"
+COZE_API_KEY = "pat_kuESzsfFQ4SrNsEcz5g7K6JLIzyR5mZdTanPozKxYsvh1chV1yz905vNt4rHulFj"
+COZE_WORKFLOW_ID = "7604404057922469922"
+
 # 创建FastAPI应用
 app = FastAPI(
     title="小红书视频口播稿文案提取API",
@@ -29,6 +34,158 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def call_coze_api(video_url):
+    """
+    调用Coze API提取小红书视频文案
+    """
+    try:
+        print(f"开始调用Coze API，视频URL：{video_url}")
+        
+        # 构建请求数据
+        payload = {
+            "workflow_id": COZE_WORKFLOW_ID,
+            "parameters": {
+                "input": video_url
+            }
+        }
+        
+        # 设置请求头
+        headers = {
+            "Authorization": f"Bearer {COZE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # 发送POST请求
+        response = requests.post(
+            COZE_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=120,
+            stream=True
+        )
+        
+        print(f"Coze API响应状态码：{response.status_code}")
+        print(f"响应头：{dict(response.headers)}")
+        
+        # 检查响应状态
+        if response.status_code != 200:
+            error_msg = f"Coze API调用失败，状态码：{response.status_code}"
+            try:
+                error_data = response.json()
+                error_msg += f"，错误信息：{error_data.get('msg', '未知错误')}"
+            except:
+                pass
+            raise Exception(error_msg)
+        
+        # 处理流式响应（SSE格式）
+        script = ""
+        current_event = None
+        current_data = ""
+        
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode('utf-8').strip()
+                print(f"收到响应行：{line_str[:200]}")
+                
+                # 跳过空行
+                if not line_str:
+                    continue
+                
+                # 解析SSE格式的行
+                if line_str.startswith('id:'):
+                    continue
+                elif line_str.startswith('event:'):
+                    current_event = line_str[6:].strip()
+                    print(f"当前事件：{current_event}")
+                elif line_str.startswith('data:'):
+                    current_data = line_str[5:].strip()
+                    print(f"当前数据：{current_data[:200]}")
+                    
+                    # 尝试解析JSON数据
+                    try:
+                        data = json.loads(current_data)
+                        print(f"解析后的数据：{json.dumps(data, ensure_ascii=False)[:200]}")
+                        
+                        # 如果是Message事件，尝试提取文案
+                        if current_event == "Message":
+                            # 从data中提取content字段
+                            content_str = data.get("content", "")
+                            if content_str:
+                                try:
+                                    # content字段可能是一个JSON字符串
+                                    content_data = json.loads(content_str)
+                                    if isinstance(content_data, dict):
+                                        # 提取output字段中的文案
+                                        script = content_data.get("output", "")
+                                        if script:
+                                            print(f"成功提取文案：{script[:100]}...")
+                                            break
+                                except json.JSONDecodeError:
+                                    # 如果不是JSON，直接使用content
+                                    script = content_str
+                                    if script:
+                                        print(f"成功提取文案：{script[:100]}...")
+                                        break
+                        
+                        # 如果是Done事件，工作流执行完成
+                        elif current_event == "Done":
+                            print("工作流执行完成")
+                            break
+                            
+                    except json.JSONDecodeError as e:
+                        print(f"JSON解析失败：{e}")
+                        continue
+        
+        # 如果没有从流式响应中提取到文案，尝试将整个响应作为文案
+        if not script or not script.strip():
+            print("尝试将整个响应作为文案")
+            response_text = response.text
+            print(f"完整响应内容：{response_text[:500]}")
+            
+            try:
+                response_data = response.json()
+                if isinstance(response_data, dict):
+                    if "data" in response_data:
+                        data = response_data["data"]
+                        if isinstance(data, dict):
+                            script = data.get("content", data.get("script", data.get("text", "")))
+                        elif isinstance(data, str):
+                            script = data
+                    elif "content" in response_data:
+                        script = response_data["content"]
+                    elif "script" in response_data:
+                        script = response_data["script"]
+                    elif "text" in response_data:
+                        script = response_data["text"]
+                    elif "result" in response_data:
+                        script = response_data["result"]
+                    elif "output" in response_data:
+                        script = response_data["output"]
+                    else:
+                        script = str(response_data)
+                else:
+                    script = str(response_data)
+            except:
+                script = response_text
+        
+        if not script or not script.strip():
+            raise Exception("Coze API返回的文案内容为空")
+        
+        print(f"Coze API调用成功，文案长度：{len(script)}字符")
+        print(f"提取的文案：{script[:200]}...")
+        
+        return script
+        
+    except requests.exceptions.Timeout:
+        print("Coze API调用超时")
+        raise Exception("Coze API调用超时，请稍后重试")
+    except requests.exceptions.RequestException as e:
+        print(f"Coze API请求失败：{str(e)}")
+        raise Exception(f"Coze API请求失败：{str(e)}")
+    except Exception as e:
+        print(f"Coze API调用异常：{str(e)}")
+        raise Exception(f"Coze API调用失败：{str(e)}")
 
 def speech_recognition(audio_path):
     """
@@ -875,7 +1032,7 @@ TEMP_DIR = tempfile.gettempdir()
 @app.post("/api/extract-from-url")
 async def extract_from_url(data: dict):
     """
-    从视频链接提取文案
+    从视频链接提取文案（使用Coze API）
     """
     try:
         print(f"收到API请求：{data}")
@@ -905,121 +1062,57 @@ async def extract_from_url(data: dict):
             print(f"非小红书视频链接：{extracted_url}")
             raise HTTPException(status_code=400, detail="仅支持小红书视频链接")
         
-        # 1. 解析小红书链接，获取视频真实地址
-        video_url = parse_xiaohongshu_url(extracted_url)
-        print(f"解析到视频地址：{video_url}")
-        
-        # 2. 下载视频文件
-        video_filename = f"video_{datetime.now().timestamp()}.mp4"
-        video_path = os.path.join(TEMP_DIR, video_filename)
-        download_video(video_url, video_path)
-        print(f"视频下载完成：{video_path}")
-        
-        # 4. 语音识别（使用librosa处理音频）
+        # 使用Coze API提取文案
         try:
-            print(f"开始处理视频文件：{video_path}")
-            print(f"视频文件大小：{os.path.getsize(video_path)}字节")
+            print(f"开始使用Coze API提取文案")
+            script = call_coze_api(extracted_url)
             
-            # 检查视频文件大小
-            if os.path.getsize(video_path) < 1000:
-                raise Exception("视频文件过小，可能下载失败")
+            # 文本清洗与格式化
+            script = clean_and_format_text(script)
+            print("文案清洗完成")
             
-            # 使用librosa提取音频
-            import librosa
-            import numpy as np
+            # 内容校验
+            validation = validate_extracted_content(script)
+            print(f"内容校验结果：质量分数={validation['quality_score']:.2f}, 有效={validation['is_valid']}")
             
-            print("使用librosa提取音频")
+            if not validation["is_valid"]:
+                print(f"内容校验失败：{validation['issues']}")
+                # 如果内容无效，返回警告信息
+                return {
+                    "success": False,
+                    "message": "提取的内容可能存在问题",
+                    "data": {
+                        "script": script,
+                        "validation": validation,
+                        "video_info": {
+                            "url": url,
+                            "video_url": extracted_url,
+                            "duration": "未知",
+                            "size": "未知"
+                        }
+                    }
+                }
             
-            # 加载音频，librosa可以自动处理视频文件
-            y, sr = librosa.load(video_path, sr=16000, mono=True)
-            
-            print(f"音频加载完成，采样率：{sr}Hz，音频长度：{len(y)/sr:.2f}秒")
-            
-            # 使用Whisper进行语音识别
-            import whisper
-            print("使用Whisper进行语音识别")
-            
-            # 加载模型
-            model = whisper.load_model("base")
-            
-            # 直接使用librosa提取的音频数据
-            # Whisper期望音频是float32类型的numpy数组，范围在[-1, 1]之间
-            audio_float32 = y.astype(np.float32)
-            
-            print(f"音频数据形状：{audio_float32.shape}")
-            
-            # 使用Whisper进行语音识别
-            result = model.transcribe(audio_float32, language="zh", fp16=False)
-            
-            # 获取识别的文本
-            script = result["text"].strip()
-            
-            if not script:
-                raise Exception("语音识别结果为空")
-            
-            print(f"语音识别完成，文本长度：{len(script)}字符")
-            print(f"识别到的文本：{script[:100]}...")
-            print("语音识别成功")
-                
-        except ImportError as e:
-            print(f"导入库失败：{str(e)}")
-            # 清理临时文件
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            raise HTTPException(status_code=500, detail=f"缺少必要的库：{str(e)}")
-        except Exception as e:
-            print(f"语音识别失败：{str(e)}")
-            # 清理临时文件
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            raise HTTPException(status_code=500, detail=f"语音识别失败：{str(e)}")
-        
-        # 5. 文本清洗与格式化
-        script = clean_and_format_text(script)
-        print("语音识别完成")
-        
-        # 6. 内容校验
-        validation = validate_extracted_content(script)
-        print(f"内容校验结果：质量分数={validation['quality_score']:.2f}, 有效={validation['is_valid']}")
-        
-        if not validation["is_valid"]:
-            print(f"内容校验失败：{validation['issues']}")
-            # 如果内容无效，返回警告信息
+            # 返回结果
             return {
-                "success": False,
-                "message": "提取的内容可能存在问题",
+                "success": True,
+                "message": "文案提取成功",
                 "data": {
                     "script": script,
                     "validation": validation,
                     "video_info": {
                         "url": url,
-                        "video_url": video_url,
-                        "duration": "3:45",
-                        "size": "25.6MB"
+                        "video_url": extracted_url,
+                        "duration": "未知",
+                        "size": "未知"
                     }
                 }
             }
-        
-        # 7. 清理临时文件
-        if os.path.exists(video_path):
-            os.remove(video_path)
-        print("临时文件清理完成")
-        
-        # 返回结果
-        return {
-            "success": True,
-            "message": "文案提取成功",
-            "data": {
-                "script": script,
-                "validation": validation,
-                "video_info": {
-                    "url": url,
-                    "video_url": video_url,
-                    "duration": "3:45",
-                    "size": "25.6MB"
-                }
-            }
-        }
+            
+        except Exception as e:
+            print(f"Coze API调用失败：{str(e)}")
+            raise HTTPException(status_code=500, detail=f"文案提取失败：{str(e)}")
+            
     except HTTPException:
         raise
     except Exception as e:
