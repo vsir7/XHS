@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 小红书视频口播稿文案提取工具 - 后端服务
+集成 XHS-Downloader API + Coze 工作流 API
 """
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File
@@ -10,8 +11,24 @@ import os
 import tempfile
 import json
 import re
+import time
 import requests
 from datetime import datetime
+
+# ============================================================
+# Configuration
+# ============================================================
+
+# XHS-Downloader API (need to start separately: python main.py api)
+XHS_DOWNLOADER_API = os.getenv("XHS_DOWNLOADER_API", "http://127.0.0.1:5556")
+
+# Coze Workflow API
+COZE_API_URL = "https://api.coze.cn/v1/workflow/stream_run"
+COZE_API_TOKEN = os.getenv(
+    "COZE_API_TOKEN",
+    "pat_kuESzsfFQ4SrNsEcz5g7K6JLIzyR5mZdTanPozKxYsvh1chV1yz905vNt4rHulFj"
+)
+COZE_WORKFLOW_ID = os.getenv("COZE_WORKFLOW_ID", "7604404057922469922")
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -29,42 +46,112 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def speech_recognition(audio_path):
+# ============================================================
+# Coze API Integration
+# ============================================================
+
+def extract_transcript_via_coze(xhs_url: str, max_retries: int = 3) -> str:
     """
-    使用Whisper进行语音识别
+    Call Coze workflow API to extract transcript from XHS video link (SSE stream).
+    """
+    if not COZE_API_TOKEN:
+        raise Exception("Coze API Token is not configured")
+
+    for attempt in range(max_retries):
+        try:
+            print(f"[Coze] Sending request (attempt {attempt + 1}): {xhs_url}")
+            resp = requests.post(
+                COZE_API_URL,
+                headers={
+                    "Authorization": f"Bearer {COZE_API_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "workflow_id": COZE_WORKFLOW_ID,
+                    "parameters": {"input": xhs_url},
+                },
+                stream=True,
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return _parse_coze_stream(resp)
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            print(f"[Coze] HTTP {status} on attempt {attempt + 1}")
+            if status == 429 and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise Exception(f"Coze API error (HTTP {status}): {str(e)}")
+        except Exception as e:
+            print(f"[Coze] Error on attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(1)
+                continue
+            raise
+    raise Exception("Coze API call failed after max retries")
+
+
+def _parse_coze_stream(response) -> str:
+    """Parse Coze SSE stream and extract final transcript."""
+    result = ""
+    for line in response.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        if line.startswith("data:"):
+            raw = line[5:].strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                if "output" in data:
+                    result = data["output"]
+                    break
+                if "content" in data:
+                    result += data["content"]
+                if "error_message" in data:
+                    raise Exception(f"Coze workflow error: {data['error_message']}")
+    transcript = result.strip()
+    if not transcript:
+        raise Exception("Coze returned empty transcript")
+    print(f"[Coze] Transcript received, length: {len(transcript)} chars")
+    return transcript
+
+
+# ============================================================
+# XHS-Downloader Integration
+# ============================================================
+
+def check_xhs_downloader_status() -> bool:
+    """Check if XHS-Downloader API is available."""
+    try:
+        resp = requests.get(f"{XHS_DOWNLOADER_API}/docs", timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def download_via_xhs_downloader(xhs_url: str, download_file: bool = False) -> dict:
+    """
+    Call XHS-Downloader API to get note info and optionally download video.
     """
     try:
-        # 检查音频文件是否存在且不为空
-        if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
-            raise Exception("音频文件不存在或为空")
-        
-        print(f"开始使用Whisper进行语音识别：{audio_path}")
-        print(f"音频文件大小：{os.path.getsize(audio_path)}字节")
-        
-        # 导入Whisper
-        import whisper
-        
-        # 加载模型（使用base模型，平衡速度和准确率）
-        model = whisper.load_model("base")
-        
-        # 进行语音识别
-        result = model.transcribe(audio_path, language="zh", fp16=False)
-        
-        # 获取识别的文本
-        transcript = result["text"].strip()
-        
-        if not transcript:
-            raise Exception("语音识别结果为空")
-        
-        print(f"语音识别完成，文本长度：{len(transcript)}字符")
-        print(f"识别到的文本：{transcript[:100]}...")
-        
-        return transcript
-        
+        resp = requests.post(
+            XHS_DOWNLOADER_API,
+            json={"url": xhs_url, "download": download_file},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        raise Exception(
+            "XHS-Downloader API is not running. "
+            "Start it with: cd XHS-Downloader && python main.py api"
+        )
     except Exception as e:
-        print(f"Whisper语音识别失败：{str(e)}")
-        # 不再使用模拟数据，而是抛出异常
-        raise Exception(f"语音识别失败：{str(e)}")
+        raise Exception(f"XHS-Downloader call failed: {str(e)}")
 
 def clean_and_format_text(text):
     """
@@ -874,150 +961,54 @@ TEMP_DIR = tempfile.gettempdir()
 @app.post("/api/extract-from-url")
 async def extract_from_url(data: dict):
     """
-    从视频链接提取文案
+    Extract transcript from XHS video link via Coze workflow API.
     """
     try:
-        print(f"收到API请求：{data}")
-        # 获取url参数
+        print(f"Received API request: {data}")
         url = data.get("url")
         if not url:
-            print("缺少url参数")
             raise HTTPException(status_code=400, detail="缺少url参数")
-        
-        # 从文本中提取URL（支持小红书分享文本）
+
+        # Extract URL from share text
         url_pattern = r'https?://[^\s<>"{}|\\^`\[\]，。！？；：、，]+'
         urls = re.findall(url_pattern, url)
-        
-        if urls:
-            extracted_url = urls[0]
-            print(f"从文本中提取到URL：{extracted_url}")
-        else:
-            extracted_url = url
-        
-        # 验证URL格式
+        extracted_url = urls[0] if urls else url
+
+        # Validate URL
         if not extracted_url.startswith(('http://', 'https://')):
-            print(f"无效的视频链接：{extracted_url}")
             raise HTTPException(status_code=400, detail="无效的视频链接")
-        
-        # 检查是否为小红书链接
         if "xiaohongshu.com" not in extracted_url and "xhslink.com" not in extracted_url:
-            print(f"非小红书视频链接：{extracted_url}")
             raise HTTPException(status_code=400, detail="仅支持小红书视频链接")
-        
-        # 1. 解析小红书链接，获取视频真实地址
-        video_url = parse_xiaohongshu_url(extracted_url)
-        print(f"解析到视频地址：{video_url}")
-        
-        # 2. 下载视频文件
-        video_filename = f"video_{datetime.now().timestamp()}.mp4"
-        video_path = os.path.join(TEMP_DIR, video_filename)
-        download_video(video_url, video_path)
-        print(f"视频下载完成：{video_path}")
-        
-        # 4. 语音识别（使用librosa处理音频）
-        try:
-            print(f"开始处理视频文件：{video_path}")
-            print(f"视频文件大小：{os.path.getsize(video_path)}字节")
-            
-            # 检查视频文件大小
-            if os.path.getsize(video_path) < 1000:
-                raise Exception("视频文件过小，可能下载失败")
-            
-            # 使用librosa提取音频
-            import librosa
-            import numpy as np
-            
-            print("使用librosa提取音频")
-            
-            # 加载音频，librosa可以自动处理视频文件
-            y, sr = librosa.load(video_path, sr=16000, mono=True)
-            
-            print(f"音频加载完成，采样率：{sr}Hz，音频长度：{len(y)/sr:.2f}秒")
-            
-            # 使用Whisper进行语音识别
-            import whisper
-            print("使用Whisper进行语音识别")
-            
-            # 加载模型
-            model = whisper.load_model("base")
-            
-            # 直接使用librosa提取的音频数据
-            # Whisper期望音频是float32类型的numpy数组，范围在[-1, 1]之间
-            audio_float32 = y.astype(np.float32)
-            
-            print(f"音频数据形状：{audio_float32.shape}")
-            
-            # 使用Whisper进行语音识别
-            result = model.transcribe(audio_float32, language="zh", fp16=False)
-            
-            # 获取识别的文本
-            script = result["text"].strip()
-            
-            if not script:
-                raise Exception("语音识别结果为空")
-            
-            print(f"语音识别完成，文本长度：{len(script)}字符")
-            print(f"识别到的文本：{script[:100]}...")
-            print("语音识别成功")
-                
-        except ImportError as e:
-            print(f"导入库失败：{str(e)}")
-            # 清理临时文件
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            raise HTTPException(status_code=500, detail=f"缺少必要的库：{str(e)}")
-        except Exception as e:
-            print(f"语音识别失败：{str(e)}")
-            # 清理临时文件
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            raise HTTPException(status_code=500, detail=f"语音识别失败：{str(e)}")
-        
-        # 5. 文本清洗与格式化
-        script = clean_and_format_text(script)
-        print("语音识别完成")
-        
-        # 6. 内容校验
+
+        # Call Coze API to extract transcript
+        print(f"[Extract] Calling Coze API for: {extracted_url}")
+        transcript = extract_transcript_via_coze(extracted_url)
+
+        # Clean and validate
+        script = clean_and_format_text(transcript)
         validation = validate_extracted_content(script)
-        print(f"内容校验结果：质量分数={validation['quality_score']:.2f}, 有效={validation['is_valid']}")
-        
-        if not validation["is_valid"]:
-            print(f"内容校验失败：{validation['issues']}")
-            # 如果内容无效，返回警告信息
-            return {
-                "success": False,
-                "message": "提取的内容可能存在问题",
-                "data": {
-                    "script": script,
-                    "validation": validation,
-                    "video_info": {
-                        "url": url,
-                        "video_url": video_url,
-                        "duration": "3:45",
-                        "size": "25.6MB"
-                    }
-                }
-            }
-        
-        # 7. 清理临时文件
-        if os.path.exists(video_path):
-            os.remove(video_path)
-        print("临时文件清理完成")
-        
-        # 返回结果
+        print(f"Validation: score={validation['quality_score']:.2f}, valid={validation['is_valid']}")
+
+        # Optionally get note info from XHS-Downloader (non-blocking, best effort)
+        note_info = {}
+        if check_xhs_downloader_status():
+            try:
+                note_info = download_via_xhs_downloader(extracted_url, download_file=False)
+            except Exception as e:
+                print(f"[XHS-Downloader] Info fetch failed (non-critical): {e}")
+
         return {
-            "success": True,
-            "message": "文案提取成功",
+            "success": True if validation["is_valid"] else False,
+            "message": "文案提取成功" if validation["is_valid"] else "提取的内容可能存在问题",
             "data": {
                 "script": script,
                 "validation": validation,
                 "video_info": {
                     "url": url,
-                    "video_url": video_url,
-                    "duration": "3:45",
-                    "size": "25.6MB"
-                }
-            }
+                    "source": "coze_workflow",
+                    "note_info": note_info,
+                },
+            },
         }
     except HTTPException:
         raise
@@ -1219,70 +1210,42 @@ async def analyze_script_endpoint(data: dict):
 @app.post("/api/upload-reference")
 async def upload_reference(data: dict):
     """
-    上传参考博主的口播稿视频及对应文本内容
+    Upload reference blogger transcript for style analysis.
+    Supports: XHS video URL (via Coze) or direct text input.
     """
     try:
         video_url = data.get("video_url")
         script_text = data.get("script_text")
-        
+
         if not video_url and not script_text:
             raise HTTPException(status_code=400, detail="缺少视频链接或文本内容")
-        
-        analysis_result = {}
-        
-        # 如果提供了视频链接，提取文案
+
+        extracted_script = ""
+
         if video_url:
-            # 验证URL格式
+            # Validate URL
             if not video_url.startswith(('http://', 'https://')):
                 raise HTTPException(status_code=400, detail="无效的视频链接")
-            
-            # 检查是否为小红书链接
             if "xiaohongshu.com" not in video_url and "xhslink.com" not in video_url:
                 raise HTTPException(status_code=400, detail="仅支持小红书视频链接")
-            
-            # 解析视频链接并提取文案
-            video_real_url = parse_xiaohongshu_url(video_url)
-            video_filename = f"reference_video_{datetime.now().timestamp()}.mp4"
-            video_path = os.path.join(TEMP_DIR, video_filename)
-            download_video(video_real_url, video_path)
-            
-            # 提取音频
-            audio_filename = f"reference_audio_{datetime.now().timestamp()}.wav"
-            audio_path = os.path.join(TEMP_DIR, audio_filename)
-            
-            try:
-                extract_audio(video_path, audio_path)
-            except Exception as e:
-                print(f"提取音频失败：{str(e)}")
-                # 创建空音频文件作为占位符
-                with open(audio_path, 'w') as f:
-                    f.write('')
-            
-            # 语音识别
-            extracted_script = speech_recognition(audio_path)
+
+            # Extract transcript via Coze API
+            print(f"[Reference] Extracting transcript via Coze: {video_url}")
+            extracted_script = extract_transcript_via_coze(video_url)
             extracted_script = clean_and_format_text(extracted_script)
-            
-            # 分析文案
-            analysis_result = analyze_script(extracted_script)
-            
-            # 清理临时文件
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-        
-        # 如果直接提供了文本内容，直接分析
         elif script_text:
-            formatted_script = clean_and_format_text(script_text)
-            analysis_result = analyze_script(formatted_script)
-        
+            extracted_script = clean_and_format_text(script_text)
+
+        # Analyze the script
+        analysis_result = analyze_script(extracted_script)
+
         return {
             "success": True,
             "message": "参考口播稿上传并分析成功",
             "data": {
                 "analysis": analysis_result,
-                "script": analysis_result.get("script", script_text)
-            }
+                "script": extracted_script,
+            },
         }
     except HTTPException:
         raise
@@ -1470,210 +1433,290 @@ async def upload_bf_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析失败：{str(e)}")
 
-def generate_script(reference_analysis, product_info):
+def generate_script(reference_analysis, product_info,
+                     blogger_persona="", historical_articles="",
+                     reference_transcripts=None):
     """
-    基于参考博主的分析结果和新产品信息生成口播稿
+    Two-phase prompt-driven script generation.
+    Phase 1: Analyze reference style (returns style summary).
+    Phase 2: Generate new script using style + product + history.
+    Returns dict with both phase outputs.
     """
     try:
-        # 1. 提取参考博主的风格特点
-        style = reference_analysis.get("style", {})
-        narrative = reference_analysis.get("narrative", {})
-        content_org = reference_analysis.get("content", {})
-        emotion = reference_analysis.get("emotion", {})
-        
-        # 2. 提取产品信息
-        product_name = product_info.get("product_name", "新产品")
-        core_features = product_info.get("core_features", [])
-        selling_points = product_info.get("selling_points", [])
-        target_audience = product_info.get("target_audience", [])
-        usage_scenarios = product_info.get("usage_scenarios", [])
-        price_info = product_info.get("price_info", "")
-        
-        # 3. 生成开头
-        opening_templates = []
-        tone = style.get("tone", "友好亲切")
-        
-        if "友好亲切" in tone:
-            opening_templates.extend([
-                f"大家好，欢迎来到我的小红书频道！今天我要给大家分享一个超级实用的{product_name}，绝对是你生活中的必备神器！",
-                f"哈喽各位小伙伴们，今天我发现了一个宝藏{product_name}，必须要和你们分享一下！",
-                f"亲爱的家人们，最近我入手了一款超棒的{product_name}，使用体验简直惊艳，迫不及待想告诉你们！"
-            ])
-        elif "推荐种草" in tone:
-            opening_templates.extend([
-                f"姐妹们！今天必须给你们安利这款{product_name}，我已经用了一段时间，真的太好用了！",
-                f"家人们，挖到宝了！这款{product_name}我不允许你们不知道，绝对是今年必入清单top1！",
-                f"强烈推荐！这款{product_name}解决了我生活中的大问题，必须分享给你们！"
-            ])
-        elif "教程指导" in tone:
-            opening_templates.extend([
-                f"大家好，今天我要给大家带来{product_name}的详细使用教程，让你快速上手这款神器！",
-                f"哈喽，今天我要教大家如何正确使用{product_name}，让它发挥最大的效果！",
-                f"亲爱的朋友们，今天我要分享{product_name}的使用技巧，让你轻松掌握这款产品的全部功能！"
-            ])
-        
-        # 选择一个开头模板
-        opening = opening_templates[0] if opening_templates else f"大家好，今天我要给大家介绍{product_name}。"
-        
-        # 4. 生成主体内容
-        body_parts = []
-        
-        # 主体结构
-        body_structure = narrative.get("body", ["叙述式"])
-        
-        if "步骤式" in body_structure:
-            # 步骤式结构
-            steps = []
-            if core_features:
-                steps.append(f"首先，{product_name}的核心功能是{core_features[0]}，这一点真的非常实用。")
-            if selling_points:
-                steps.append(f"然后，它的最大卖点是{selling_points[0]}，相比其他产品有很大优势。")
-            if usage_scenarios:
-                steps.append(f"接下来，它特别适合{usage_scenarios[0]}，使用场景非常广泛。")
-            if target_audience:
-                steps.append(f"最后，这款产品特别适合{target_audience[0]}，是你们的理想选择。")
-            body_parts.extend(steps)
-        elif "优缺点分析" in body_structure:
-            # 优缺点分析结构
-            if selling_points:
-                body_parts.append(f"说到{product_name}的优点，首先是{selling_points[0]}，这一点真的让我很惊喜。")
-            if core_features:
-                body_parts.append(f"其次，它的{core_features[0]}功能也非常出色，使用起来特别方便。")
-            if usage_scenarios:
-                body_parts.append(f"另外，它在{usage_scenarios[0]}时使用效果最佳，场景适应性很强。")
-        elif "对比式" in body_structure:
-            # 对比式结构
-            body_parts.append(f"相比市面上其他同类产品，{product_name}最大的优势是{selling_points[0] if selling_points else '性价比高'}。")
-            if core_features:
-                body_parts.append(f"它的{core_features[0]}功能比其他产品更加出色，使用体验更好。")
+        if reference_transcripts is None:
+            reference_transcripts = []
+
+        # ---- Phase 1: Style Analysis ----
+        style_summary = _build_style_summary(reference_analysis)
+
+        # ---- Phase 2: Script Generation ----
+        # Build the prompt context
+        persona = blogger_persona or "小红书母婴赛道宝爸类型博主"
+
+        # Extract product details
+        if isinstance(product_info, dict):
+            product_name = product_info.get("product_name", "新产品")
+            product_text = _format_product_info(product_info)
         else:
-            # 叙述式结构
-            if core_features:
-                body_parts.append(f"{product_name}的核心功能包括{', '.join(core_features[:3])}，这些功能真的非常实用。")
-            if selling_points:
-                body_parts.append(f"它的主要卖点是{', '.join(selling_points[:3])}，绝对值得入手。")
-            if usage_scenarios:
-                body_parts.append(f"这款产品特别适合{', '.join(usage_scenarios[:3])}，使用场景非常广泛。")
-            if target_audience:
-                body_parts.append(f"它的目标用户是{', '.join(target_audience[:3])}，是为你们量身打造的。")
-        
-        # 添加价格信息
-        if price_info:
-            body_parts.append(f"关于价格方面，{product_name}的定价是{price_info}，性价比非常高。")
-        
-        # 5. 生成结尾
-        closing_templates = []
-        
-        if "友好亲切" in tone:
-            closing_templates.extend([
-                "好了，今天的分享就到这里，如果你们觉得有用的话，记得点赞收藏哦！有什么问题可以在评论区留言，我会一一回复的。我们下期再见，拜拜！",
-                "总之，这款产品真的非常推荐给大家，相信你们用了之后也会和我一样爱上它！记得点赞关注，我会继续分享更多好物给你们的。",
-                "希望我的分享对你们有所帮助，如果你们也用过这款产品，欢迎在评论区分享你们的使用体验。我们下期见！"
-            ])
-        elif "推荐种草" in tone:
-            closing_templates.extend([
-                "话不多说，这款产品我已经加入购物车了，链接我会放在评论区，想要的小伙伴们赶紧去看看吧！记得点赞收藏，手慢无哦！",
-                "总之，这款产品绝对是今年的必入清单，我已经安利给身边的朋友们了，反馈都特别好。链接在评论区，冲就完事了！",
-                "好了，今天的种草就到这里，相信我，这款产品真的值得你们拥有。记得点赞关注，我会继续给你们挖掘更多宝藏好物的！"
-            ])
-        elif "教程指导" in tone:
-            closing_templates.extend([
-                "以上就是{product_name}的详细使用方法，希望对你们有所帮助。如果还有什么不明白的地方，可以在评论区留言，我会详细解答的。记得点赞收藏，我们下期再见！",
-                "掌握了这些使用技巧，相信你们可以充分发挥{product_name}的全部功能了。如果你们有更好的使用方法，欢迎在评论区分享，我们一起交流学习。",
-                "好了，今天的教程就到这里，希望你们都能学会如何正确使用{product_name}。记得点赞关注，我会继续分享更多实用教程给你们的！"
-            ])
-        
-        # 选择一个结尾模板
-        closing = closing_templates[0] if closing_templates else "好了，今天的分享就到这里，希望对你们有所帮助。记得点赞收藏，我们下期再见！"
-        
-        # 6. 组合成完整的口播稿
-        script_parts = [opening] + body_parts + [closing]
-        script = '\n\n'.join(script_parts)
-        
-        # 7. 根据风格进行调整
-        # 调整句子长度
-        avg_sentence_length = style.get("average_sentence_length", 15)
-        if avg_sentence_length < 10:
-            # 简洁明快风格，缩短句子
-            sentences = re.split(r'[，。！？；：,.!?:;]', script)
-            short_sentences = []
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if sentence:
-                    if len(sentence) > 20:
-                        # 断句
-                        words = sentence.split(' ')
-                        for i in range(0, len(words), 4):
-                            short_sentence = ' '.join(words[i:i+4])
-                            if short_sentence:
-                                short_sentences.append(short_sentence + '。')
-                    else:
-                        short_sentences.append(sentence + '。')
-            script = ' '.join(short_sentences)
-        elif avg_sentence_length > 20:
-            # 详细全面风格，扩展句子
-            # 这里可以添加更多细节描述
-            pass
-        
-        # 调整情感强度
-        intensity = emotion.get("intensity", "中等")
-        if intensity == "强烈":
-            # 添加强调词
-            emphasis_words = ["超级", "非常", "特别", "真的", "太", "极其", "绝对"]
-            sentences = re.split(r'[，。！？；：,.!?:;]', script)
-            emphasized_sentences = []
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if sentence and any(word in sentence for word in ["好用", "推荐", "喜欢", "实用"]):
-                    # 在句子开头添加强调词
-                    import random
-                    if random.random() > 0.5:
-                        emphasized_sentence = f"{random.choice(emphasis_words)}{sentence}"
-                        emphasized_sentences.append(emphasized_sentence)
-                    else:
-                        emphasized_sentences.append(sentence)
-                else:
-                    emphasized_sentences.append(sentence)
-            script = '。'.join(emphasized_sentences)
-        
-        # 8. 文本清洗与格式化
-        script = clean_and_format_text(script)
-        
-        return script
+            product_name = "新产品"
+            product_text = str(product_info) if product_info else ""
+
+        # Build generation prompt for display
+        prompt = _build_generation_prompt(
+            persona=persona,
+            style_summary=style_summary,
+            product_name=product_name,
+            product_text=product_text,
+            historical_articles=historical_articles,
+            reference_transcripts=reference_transcripts,
+        )
+
+        # For now, generate locally using template + style adaptation
+        # This will be replaced by LLM API call when available
+        script = _generate_from_template(
+            reference_analysis=reference_analysis,
+            product_info=product_info if isinstance(product_info, dict) else {},
+            persona=persona,
+            style_summary=style_summary,
+        )
+
+        return {
+            "style_analysis": style_summary,
+            "generation_prompt": prompt,
+            "script": script,
+        }
     except Exception as e:
-        print(f"生成口播稿失败：{str(e)}")
-        # 返回默认口播稿
-        default_script = f"大家好，今天我要给大家介绍{product_info.get('product_name', '新产品')}。\n\n{product_info.get('product_name', '新产品')}是一款非常实用的产品，它具有{', '.join(product_info.get('core_features', ['多种功能']))}等特点。\n\n这款产品特别适合{', '.join(product_info.get('target_audience', ['广大用户']))}，使用起来非常方便。\n\n好了，今天的分享就到这里，希望对你们有所帮助。记得点赞收藏，我们下期再见！"
-        return default_script
+        print(f"Script generation failed: {str(e)}")
+        return {
+            "style_analysis": "",
+            "generation_prompt": "",
+            "script": f"生成失败：{str(e)}",
+        }
+
+
+def _build_style_summary(analysis: dict) -> str:
+    """Build a readable style summary from analysis result."""
+    parts = []
+    style = analysis.get("style", {})
+    narrative = analysis.get("narrative", {})
+    content = analysis.get("content", {})
+    emotion = analysis.get("emotion", {})
+
+    if style.get("tone"):
+        parts.append(f"【语言风格】语气{style['tone']}")
+    if style.get("style"):
+        parts.append(f"  特点：{', '.join(style['style'])}")
+    if style.get("features"):
+        parts.append(f"  用词特征：{', '.join(style['features'])}")
+
+    if narrative.get("body"):
+        parts.append(f"【叙事框架】主体结构：{', '.join(narrative['body'])}")
+    if narrative.get("transitions"):
+        parts.append(f"  过渡词：{', '.join(narrative['transitions'])}")
+
+    if content.get("organization"):
+        parts.append(f"【内容组织】{', '.join(content['organization'])}")
+    if content.get("pace"):
+        parts.append(f"  节奏：{content['pace']}")
+
+    if emotion.get("emotion"):
+        parts.append(f"【情感表达】倾向：{', '.join(emotion['emotion'])}")
+    if emotion.get("intensity"):
+        parts.append(f"  强度：{emotion['intensity']}")
+
+    summary = analysis.get("summary", "")
+    if summary:
+        parts.insert(0, f"【总结】{summary}")
+
+    return "\n".join(parts) if parts else "风格分析数据不足"
+
+
+def _format_product_info(info: dict) -> str:
+    """Format product info dict into readable text."""
+    lines = []
+    if info.get("product_name"):
+        lines.append(f"产品名称：{info['product_name']}")
+    if info.get("core_features"):
+        lines.append(f"核心功能：{', '.join(info['core_features'][:5])}")
+    if info.get("selling_points"):
+        lines.append(f"产品卖点：{', '.join(info['selling_points'][:5])}")
+    if info.get("target_audience"):
+        lines.append(f"目标受众：{', '.join(info['target_audience'][:3])}")
+    if info.get("usage_scenarios"):
+        lines.append(f"使用场景：{', '.join(info['usage_scenarios'][:3])}")
+    if info.get("price_info"):
+        lines.append(f"价格信息：{info['price_info']}")
+    return "\n".join(lines) if lines else "暂无详细产品信息"
+
+
+def _build_generation_prompt(persona, style_summary, product_name,
+                              product_text, historical_articles,
+                              reference_transcripts):
+    """Build the full generation prompt (for display or LLM call)."""
+    prompt_parts = [
+        f"你现在是{persona}。\n",
+        "## 参考风格",
+        f"以下是你需要模仿的口播风格分析：\n{style_summary}\n",
+    ]
+
+    if reference_transcripts:
+        prompt_parts.append("## 参考博主原文")
+        for i, t in enumerate(reference_transcripts, 1):
+            prompt_parts.append(f"博主{i}：\n{t[:500]}{'...' if len(t) > 500 else ''}\n")
+
+    prompt_parts.extend([
+        "## 推广商品",
+        f"商品名称：{product_name}",
+        f"商品信息：\n{product_text}\n",
+    ])
+
+    if historical_articles:
+        prompt_parts.extend([
+            "## 历史文章参考",
+            f"以下是你之前写过的文章，请保持一致的个人风格：\n{historical_articles}\n",
+        ])
+
+    prompt_parts.extend([
+        "## 写作要求",
+        "1. 严格模仿参考风格中总结的框架结构",
+        "2. 融入商品的核心卖点和使用场景",
+        "3. 保持与历史文章一致的个人风格和语气",
+        "4. 口播稿时长控制在 1-2 分钟左右",
+        "5. 语言自然口语化，适合视频口播录制",
+        "6. 包含开头引入、主体测评/分享、结尾总结推荐三个部分",
+        "\n请直接输出完整的口播稿文案：",
+    ])
+
+    return "\n".join(prompt_parts)
+
+
+def _generate_from_template(reference_analysis, product_info,
+                             persona, style_summary):
+    """
+    Template-based script generation (fallback when no LLM available).
+    Uses reference style analysis to adapt template output.
+    """
+    style = reference_analysis.get("style", {})
+    narrative = reference_analysis.get("narrative", {})
+    emotion = reference_analysis.get("emotion", {})
+
+    product_name = product_info.get("product_name", "新产品")
+    core_features = product_info.get("core_features", [])
+    selling_points = product_info.get("selling_points", [])
+    target_audience = product_info.get("target_audience", [])
+    usage_scenarios = product_info.get("usage_scenarios", [])
+    price_info = product_info.get("price_info", "")
+
+    tone = style.get("tone", "友好亲切")
+    body_structure = narrative.get("body", ["叙述式"])
+
+    # Opening
+    if "推荐种草" in tone:
+        opening = f"家人们，今天必须给你们安利这款{product_name}，我已经用了一段时间，真的太好用了！"
+    elif "教程指导" in tone:
+        opening = f"大家好，今天给大家带来{product_name}的详细分享，让你快速了解这款产品！"
+    else:
+        opening = f"大家好，今天我要给大家分享一个超级实用的好物——{product_name}，绝对是生活中的必备神器！"
+
+    # Body
+    body_parts = []
+    if "对比式" in body_structure:
+        if selling_points:
+            body_parts.append(f"相比市面上其他同类产品，{product_name}最大的优势是{selling_points[0]}。")
+        if core_features:
+            body_parts.append(f"它的{core_features[0]}功能比其他产品更加出色，使用体验更好。")
+    elif "步骤式" in body_structure:
+        if core_features:
+            body_parts.append(f"首先，{product_name}的核心功能是{core_features[0]}，这一点真的非常实用。")
+        if selling_points:
+            body_parts.append(f"然后，它的最大卖点是{selling_points[0]}，相比其他产品有很大优势。")
+        if usage_scenarios:
+            body_parts.append(f"接下来，它特别适合{usage_scenarios[0]}，使用场景非常广泛。")
+    else:
+        if core_features:
+            body_parts.append(f"{product_name}的核心功能包括{'、'.join(core_features[:3])}，这些功能真的非常实用。")
+        if selling_points:
+            body_parts.append(f"它的主要卖点是{'、'.join(selling_points[:3])}，绝对值得入手。")
+        if usage_scenarios:
+            body_parts.append(f"这款产品特别适合{'、'.join(usage_scenarios[:3])}，使用场景非常广泛。")
+        if target_audience:
+            body_parts.append(f"它的目标用户是{'、'.join(target_audience[:3])}，是为你们量身打造的。")
+
+    if price_info:
+        body_parts.append(f"关于价格方面，{product_name}的定价是{price_info}，性价比非常高。")
+
+    # Closing
+    if "推荐种草" in tone:
+        closing = "话不多说，链接我会放在评论区，想要的小伙伴们赶紧去看看吧！记得点赞收藏，手慢无哦！"
+    else:
+        closing = "好了，今天的分享就到这里，如果你们觉得有用的话，记得点赞收藏哦！有什么问题可以在评论区留言。我们下期再见！"
+
+    parts = [opening] + body_parts + [closing]
+    script = "\n\n".join(parts)
+
+    # Apply emotion intensity
+    intensity = emotion.get("intensity", "中等")
+    if intensity == "强烈":
+        import random
+        emphasis_words = ["超级", "非常", "特别", "真的", "太"]
+        for word in ["好用", "推荐", "喜欢", "实用"]:
+            if word in script and random.random() > 0.5:
+                script = script.replace(word, f"{random.choice(emphasis_words)}{word}", 1)
+
+    return clean_and_format_text(script)
 
 @app.post("/api/generate-script")
 async def generate_script_endpoint(data: dict):
     """
-    基于参考博主分析结果和产品信息生成口播稿
+    Two-phase script generation:
+    Phase 1 - style analysis from reference; Phase 2 - script generation.
     """
     try:
         reference_analysis = data.get("reference_analysis")
         product_info = data.get("product_info")
-        
+        blogger_persona = data.get("blogger_persona", "")
+        historical_articles = data.get("historical_articles", "")
+        reference_transcripts = data.get("reference_transcripts", [])
+
         if not reference_analysis:
             raise HTTPException(status_code=400, detail="缺少参考博主分析结果")
         if not product_info:
             raise HTTPException(status_code=400, detail="缺少产品信息")
-        
-        # 生成口播稿
-        script = generate_script(reference_analysis, product_info)
-        
+
+        result = generate_script(
+            reference_analysis=reference_analysis,
+            product_info=product_info,
+            blogger_persona=blogger_persona,
+            historical_articles=historical_articles,
+            reference_transcripts=reference_transcripts,
+        )
+
         return {
             "success": True,
             "message": "口播稿生成成功",
-            "data": {
-                "script": script
-            }
+            "data": result,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成失败：{str(e)}")
+
+
+@app.get("/api/check-services")
+async def check_services():
+    """Health check for external services."""
+    xhs_ok = check_xhs_downloader_status()
+    coze_ok = bool(COZE_API_TOKEN)
+    return {
+        "xhs_downloader": {
+            "available": xhs_ok,
+            "url": XHS_DOWNLOADER_API,
+        },
+        "coze_api": {
+            "configured": coze_ok,
+            "workflow_id": COZE_WORKFLOW_ID,
+        },
+    }
 
 @app.get("/")
 async def root():
