@@ -7,6 +7,7 @@
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from dotenv import load_dotenv
 import os
 import tempfile
 import json
@@ -14,6 +15,8 @@ import re
 import time
 import requests
 from datetime import datetime
+
+load_dotenv()
 
 # ============================================================
 # Configuration
@@ -24,10 +27,7 @@ XHS_DOWNLOADER_API = os.getenv("XHS_DOWNLOADER_API", "http://127.0.0.1:5556")
 
 # Coze Workflow API
 COZE_API_URL = "https://api.coze.cn/v1/workflow/stream_run"
-COZE_API_TOKEN = os.getenv(
-    "COZE_API_TOKEN",
-    "pat_kuESzsfFQ4SrNsEcz5g7K6JLIzyR5mZdTanPozKxYsvh1chV1yz905vNt4rHulFj"
-)
+COZE_API_TOKEN = os.getenv("COZE_API_TOKEN", "")
 COZE_WORKFLOW_ID = os.getenv("COZE_WORKFLOW_ID", "7604404057922469922")
 
 # 创建FastAPI应用
